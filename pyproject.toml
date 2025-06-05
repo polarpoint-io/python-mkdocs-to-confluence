@@ -20,7 +20,8 @@ dependencies = [
     "md2cf",
     "mime", 
     "pre-commit",
-    "mkdocs"
+    "mkdocs",
+    "atlassian-python-api"
 ]
 
 [tool.setuptools]
