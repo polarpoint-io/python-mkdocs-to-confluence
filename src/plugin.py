@@ -63,6 +63,7 @@ class MkdocsToConfluence(BasePlugin):
     _id = 0
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
+        ('github_base_url', config_options.Type(str, default=None)),
         ("space", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
         ("username",config_options.Type(str, default=environ.get("CONFLUENCE_USERNAME", None)),),
@@ -178,7 +179,16 @@ class MkdocsToConfluence(BasePlugin):
             self.dryrun = False
 
     def on_page_markdown(self, markdown, page: Page, config, files):
-        return markdown
+        if not hasattr(page, 'file') or not page.file.src_path:
+            return markdown
+
+        relative_path = page.file.src_path  
+        github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
+
+
+        header = f"Update source on GitHub]({github_url})\n\n"
+        return header + markdown
+
 
     def on_post_page(self, output, page: Page, config):
         site_dir = config.get("site_dir")

@@ -15,7 +15,11 @@ dependencies = [
     "pytest-mock==3.12.0",
     "coverage==7.4.1",
     "requests",
-    "pyyaml==6.0"
+    "pyyaml==6.0",
+    "mistune",
+    "md2cf",
+    "mime",  # Note: if this is incorrect (not a valid PyPI package), it may need adjustment
+    "pre-commit"
 ]
 
 [tool.setuptools]
