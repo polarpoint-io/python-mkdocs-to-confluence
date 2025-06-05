@@ -19,7 +19,8 @@ dependencies = [
     "mistune",
     "md2cf",
     "mime", 
-    "pre-commit"
+    "pre-commit",
+    "mkdocs"
 ]
 
 [tool.setuptools]
