@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "myproject"
+version = "1.4.0"
+description = "My project description"
+readme = "README.md"
+authors = [
+    { name = "Your Name", email = "your.email@example.com" }
+]
+dependencies = [
+    "pytest==8.0.0",
+    "pytest-mock==3.12.0",
+    "coverage==7.4.1",
+    "requests",
+    "pyyaml==6.0"
+]
+
+[tool.setuptools]
+packages = { find = { where = ["src"] } }
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pytest.ini_options]
+addopts = "--maxfail=1 --disable-warnings -q"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+exclude = [
+    "__pycache__",
+    "*.pyc",
+    "*.pyo",
+    "venv",
+    "env",
+    "dist",
+    "build",
+    "*.egg-info"
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+
+# Development dependencies
+[project.optional-dependencies]
+dev = [
+    "pytest",   # Included in case it's needed separately for dev setup
+    "black"
+]

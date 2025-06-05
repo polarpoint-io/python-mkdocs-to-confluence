@@ -1,0 +1,18 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{values.component_id | dump}}
+  {%- if values.description %}
+  description: ${{values.description | dump}}
+  {%- endif %}
+  annotations:
+    github.com/project-slug: https://github.com/orgs/${{values.destination.owner + "/" + values.destination.repo}}
+    backstage.io/techdocs-ref: dir:.
+    sonarqube.org/project-key: ${{values.destination.repo}}
+    grafana/tag-selector: value
+    grafana/dashboard-selector: value
+
+spec:
+  type: service
+  lifecycle: experimental
+  owner: ${{values.owner | dump}}

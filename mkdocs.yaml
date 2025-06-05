@@ -1,0 +1,13 @@
+site_name: Root docs
+repo_url: https://github.com/NewDay-Data/python-repository-template
+edit_uri: edit/main/docs
+
+nav:
+  - Home: index.md
+  - Local development: local-development.md
+  - Runbook: runbook.md
+
+docs_dir: docs
+plugins:
+  - techdocs-core
+  - kroki
