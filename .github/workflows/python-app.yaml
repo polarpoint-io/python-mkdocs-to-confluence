@@ -18,13 +18,13 @@ on:
 
 jobs:
   ci:
-    uses: NewDay-Data/shared-github-actions/.github/workflows/python-ci.yaml@NEX-29034
+    uses: NewDay-Data/shared-github-actions/.github/workflows/python-ci.yaml@v2
     with:
       source_dir: 'src'
       tests_dir: 'tests'
   cd:
     needs: ci 
-    uses: NewDay-Data/shared-github-actions/.github/workflows/python-cd.yaml@NEX-29034
+    uses: NewDay-Data/shared-github-actions/.github/workflows/python-cd.yaml@v2
     with:
       artifact_name: python-repository-template
       repository_name: nexus_pypi

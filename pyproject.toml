@@ -57,6 +57,10 @@ fail_under = 80
 # Development dependencies
 [project.optional-dependencies]
 dev = [
-    "pytest",   # Included in case it's needed separately for dev setup
+    "mkdocs",
+    "pytest",
+    "coverage",
+    "md2cf",
+    "atlassian-python-api",
     "black"
 ]
