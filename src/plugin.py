@@ -63,11 +63,17 @@ class MkdocsToConfluence(BasePlugin):
     _id = 0
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
-        ('github_base_url', config_options.Type(str, default=None)),
+        ("github_base_url", config_options.Type(str, default=None)),
         ("space", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
-        ("username",config_options.Type(str, default=environ.get("CONFLUENCE_USERNAME", None)),),
-        ("password",config_options.Type(str, default=environ.get("CONFLUENCE_PASSWORD", None)),),
+        (
+            "username",
+            config_options.Type(str, default=environ.get("CONFLUENCE_USERNAME", None)),
+        ),
+        (
+            "password",
+            config_options.Type(str, default=environ.get("CONFLUENCE_PASSWORD", None)),
+        ),
         ("enabled_if_env", config_options.Type(str, default=None)),
         ("verbose", config_options.Type(bool, default=False)),
         ("debug", config_options.Type(bool, default=False)),
@@ -179,16 +185,14 @@ class MkdocsToConfluence(BasePlugin):
             self.dryrun = False
 
     def on_page_markdown(self, markdown, page: Page, config, files):
-        if not hasattr(page, 'file') or not page.file.src_path:
+        if not hasattr(page, "file") or not page.file.src_path:
             return markdown
 
-        relative_path = page.file.src_path  
+        relative_path = page.file.src_path
         github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
-
 
         header = f"Update source on GitHub]({github_url})\n\n"
         return header + markdown
-
 
     def on_post_page(self, output, page: Page, config):
         site_dir = config.get("site_dir")
@@ -281,7 +285,7 @@ class MkdocsToConfluence(BasePlugin):
 
             if self.config.get("enable_footer", False):
 
-                markdown_file_url = page.file.src_uri  
+                markdown_file_url = page.file.src_uri
                 confluence_warning_macro = f"""
                 <ac:structured-macro ac:name="warning">
                     <ac:parameter ac:name="title">Important</ac:parameter>
@@ -292,11 +296,10 @@ class MkdocsToConfluence(BasePlugin):
                 </ac:structured-macro>
                 """
 
-                # Append the warning macro 
+                # Append the warning macro
                 html += confluence_warning_macro
 
                 log.info(f"Added Confluence warning macro footer to '{page.title}'.")
-
 
             # Update page
             if page_id:
