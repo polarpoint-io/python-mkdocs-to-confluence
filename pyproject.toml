@@ -3,8 +3,8 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "myproject"
-version = "1.4.0"
+name = "mkdocs-to-confluence"
+version = "0.1.0"
 description = "My project description"
 readme = "README.md"
 authors = [
@@ -18,7 +18,7 @@ dependencies = [
     "pyyaml==6.0",
     "mistune",
     "md2cf",
-    "mime",  # Note: if this is incorrect (not a valid PyPI package), it may need adjustment
+    "mime", 
     "pre-commit"
 ]
 
