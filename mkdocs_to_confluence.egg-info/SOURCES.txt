@@ -1,0 +1,10 @@
+README.md
+setup.py
+src/__init__.py
+src/plugin.py
+mkdocs_to_confluence.egg-info/PKG-INFO
+mkdocs_to_confluence.egg-info/SOURCES.txt
+mkdocs_to_confluence.egg-info/dependency_links.txt
+mkdocs_to_confluence.egg-info/entry_points.txt
+mkdocs_to_confluence.egg-info/requires.txt
+mkdocs_to_confluence.egg-info/top_level.txt

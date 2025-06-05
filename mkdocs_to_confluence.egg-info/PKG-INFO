@@ -1,0 +1,15 @@
+Metadata-Version: 2.1
+Name: mkdocs-to-confluence
+Version: 0.3.0
+Summary: MkDocs plugin for uploading markdown documentation to Confluence via Confluence REST API
+Home-page: https://github.com/bainss/mkdocs-to-confluence/
+Author: Surjit Bains
+Author-email: surjit.bains@gmail.com
+License: MIT
+Keywords: mkdocs markdown confluence documentation rest python
+Requires-Python: >=3.6
+Requires-Dist: mkdocs>=1.1
+Requires-Dist: jinja2
+Requires-Dist: mistune
+Requires-Dist: md2cf
+Requires-Dist: requests
