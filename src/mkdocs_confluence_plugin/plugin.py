@@ -142,7 +142,6 @@ class MkdocsToConfluence(BasePlugin):
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
 
-
         self.confluence = Confluence(
             url=self.config["host_url"].replace("/rest/api/content", ""),
             username=self.config["username"],
@@ -195,8 +194,9 @@ class MkdocsToConfluence(BasePlugin):
 
         log = logging.getLogger("mkdocs.plugins")
 
-        space_key = getattr(self, "space_key", None) or config.get("confluence", {}).get("space_key")
-
+        space_key = getattr(self, "space_key", None) or config.get(
+            "confluence", {}
+        ).get("space_key")
 
         for page in getattr(self, "pages", []):
             title = page.get("title")
@@ -211,23 +211,22 @@ class MkdocsToConfluence(BasePlugin):
                     "version": {"number": version + 1},
                     "title": title,
                     "type": "page",
-                    "body": {
-                        "storage": {
-                            "value": body,
-                            "representation": "storage"
-                        }
-                    }
+                    "body": {"storage": {"value": body, "representation": "storage"}},
                 }
 
                 url = f"{self.curl_url}{page_id}"
-                log.info(f"Updating Confluence page '{title}' (ID: {page_id}) to version {version + 1}")
+                log.info(
+                    f"Updating Confluence page '{title}' (ID: {page_id}) to version {version + 1}"
+                )
 
                 response = requests.put(url, json=data, auth=self.auth)
 
                 if response.status_code >= 200 and response.status_code < 300:
                     log.info(f"Successfully updated page '{title}'")
                 else:
-                    log.error(f"Failed to update page '{title}' (status code: {response.status_code}): {response.text}")
+                    log.error(
+                        f"Failed to update page '{title}' (status code: {response.status_code}): {response.text}"
+                    )
 
             else:
                 # Create new page
@@ -237,23 +236,25 @@ class MkdocsToConfluence(BasePlugin):
                     "type": "page",
                     "title": title,
                     "space": {"key": space_key},
-                    "body": {
-                        "storage": {
-                            "value": body,
-                            "representation": "storage"
-                        }
-                    }
+                    "body": {"storage": {"value": body, "representation": "storage"}},
                 }
 
                 if getattr(self, "parent_id", None):
                     data["ancestors"] = [{"id": self.parent_id}]
 
-                response = requests.post(self.curl_url, auth=self.auth, headers={"Content-Type": "application/json"}, data=json.dumps(data))
+                response = requests.post(
+                    self.curl_url,
+                    auth=self.auth,
+                    headers={"Content-Type": "application/json"},
+                    data=json.dumps(data),
+                )
 
                 if response.status_code >= 200 and response.status_code < 300:
                     log.info(f"Successfully created page '{title}'")
                 else:
-                    log.error(f"Failed to create page '{title}' (status code: {response.status_code}): {response.text}")
+                    log.error(
+                        f"Failed to create page '{title}' (status code: {response.status_code}): {response.text}"
+                    )
 
     def on_page_markdown(self, markdown, page: Page, config, files):
         if not hasattr(page, "file") or not page.file.src_path:
@@ -264,7 +265,6 @@ class MkdocsToConfluence(BasePlugin):
 
         header = f"Update source on GitHub]({github_url})\n\n"
         return header + markdown
-
 
     def on_post_page(self, output, page: Page, config):
         site_dir = config.get("site_dir")
