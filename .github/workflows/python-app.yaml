@@ -24,7 +24,7 @@ jobs:
       tests_dir: 'tests'
   cd:
     needs: ci 
-    uses: NewDay-Data/shared-github-actions/.github/workflows/python-cd.yaml@v2
+    uses: NewDay-Data/shared-github-actions/.github/workflows/python-cd.yaml@CPE-0000
     with:
       artifact_name: mkdocs_confluence_plugin
       repository_name: nexus_pypi
