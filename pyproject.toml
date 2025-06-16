@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mkdocs_confluence_plugin"
-version = "1.2.2"
+version = "1.2.3"
 description = "MkDocs plugin to export to Confluence"
 readme = "README.md"
 authors = [
