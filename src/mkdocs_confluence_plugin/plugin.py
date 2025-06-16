@@ -20,6 +20,7 @@ from pathlib import Path
 from mkdocs.structure.nav import Navigation, Section
 from mkdocs.structure.pages import Page
 from atlassian import Confluence
+from pathlib import Path
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run. "
@@ -98,6 +99,14 @@ class MkdocsToConfluence(BasePlugin):
         self.page_ids = {}
         self.page_versions = {}
 
+    def load_pages(self):
+        pages = []
+        for file_path in Path(self.docs_dir).rglob("*.md"):
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            rendered = self.renderer(content)
+            pages.append({"title": file_path.stem, "body": rendered})
+        return pages
 
     def __recursive_search(self, items, depth: int):
         spaces = depth * 4

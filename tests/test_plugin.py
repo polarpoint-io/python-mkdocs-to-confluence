@@ -529,17 +529,21 @@ def test_on_post_build_with_parent_id(monkeypatch, plugin):
     monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeResponse())
     plugin.on_post_build(config={}, files=[])
 
+
 def test_load_pages_from_dir_returns_expected(monkeypatch, plugin):
     from pathlib import Path
+    from unittest.mock import mock_open
+
     plugin.docs_dir = "/fake/docs"
     plugin.renderer = lambda x: "<p>Rendered</p>"
 
     fake_file = Path("/fake/docs/page.md")
     monkeypatch.setattr("pathlib.Path.rglob", lambda self, pattern: [fake_file])
-    monkeypatch.setattr("builtins.open", lambda f, *args, **kwargs: iter(["# Title"]))
+    monkeypatch.setattr("builtins.open", mock_open(read_data="# Title"))
     monkeypatch.setattr("os.path.splitext", lambda p: ("/fake/docs/page", ".md"))
 
-    result = plugin.load_pages_from_dir()
-    assert isinstance(result, list)
+    result = plugin.load_pages()
+
+    assert result == [{"title": "page", "body": "<p>Rendered</p>"}]
 
 
