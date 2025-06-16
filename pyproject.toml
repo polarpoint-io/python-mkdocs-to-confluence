@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mkdocs-to-confluence"
-version = "0.1.0"
+version = "1.0.0"
 description = "My project description"
 readme = "README.md"
 authors = [
