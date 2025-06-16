@@ -1,11 +1,11 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61", "wheel", "build"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mkdocs_confluence_plugin"
 version = "1.2.0"
-description = "My project description"
+description = "MkDocs plugin to export to Confluence"
 readme = "README.md"
 authors = [
     { name = "Your Name", email = "surjit.bains@gmail.com" }
