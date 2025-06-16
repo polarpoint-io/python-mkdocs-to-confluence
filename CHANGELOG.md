@@ -1,5 +1,13 @@
 # Semantic Versioning Changelog
 
+## [1.0.1](https://github.com/NewDay-Data/python-mkdocs-to-confluence/compare/v1.0.0...v1.0.1) (2025-06-16)
+
+
+### Bug Fixes
+
+* correct pyproject.toml ([562458c](https://github.com/NewDay-Data/python-mkdocs-to-confluence/commit/562458cc69044447fa8f920101f27fa18c4ef860))
+* correct repo path in pyproject.tom; ([ab08ff3](https://github.com/NewDay-Data/python-mkdocs-to-confluence/commit/ab08ff3b0fff21f360027d6f5ce71c7b64311ddf))
+
 # 1.0.0 (2025-06-16)
 
 
