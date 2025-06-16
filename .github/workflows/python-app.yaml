@@ -26,7 +26,7 @@ jobs:
     needs: ci 
     uses: NewDay-Data/shared-github-actions/.github/workflows/python-cd.yaml@v2
     with:
-      artifact_name: python-repository-template
+      artifact_name: mkdocs_confluence_plugin
       repository_name: nexus_pypi
 
 
