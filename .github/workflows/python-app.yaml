@@ -28,4 +28,3 @@ jobs:
     with:
       artifact_name: mkdocs_confluence_plugin
       repository_name: nexus_pypi
-
