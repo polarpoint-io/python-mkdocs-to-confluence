@@ -1,5 +1,12 @@
 # Semantic Versioning Changelog
 
+# [1.2.0](https://github.com/NewDay-Data/python-mkdocs-to-confluence/compare/v1.1.0...v1.2.0) (2025-06-16)
+
+
+### Features
+
+* test new reusable action ([3403125](https://github.com/NewDay-Data/python-mkdocs-to-confluence/commit/34031258989722f925df2002a9a420ad46ad4b11))
+
 # [1.1.0](https://github.com/NewDay-Data/python-mkdocs-to-confluence/compare/v1.0.2...v1.1.0) (2025-06-16)
 
 
