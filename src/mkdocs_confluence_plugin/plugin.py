@@ -90,6 +90,15 @@ class MkdocsToConfluence(BasePlugin):
         self.session = requests.Session()
         self.page_attachments = {}
 
+
+    def on_pre_build(self, config):
+        self.some_data = {}
+
+    def on_pre_build(self, config):
+        self.page_ids = {}
+        self.page_versions = {}
+
+
     def __recursive_search(self, items, depth: int):
         spaces = depth * 4
         sections = ""
@@ -137,6 +146,11 @@ class MkdocsToConfluence(BasePlugin):
     def on_config(self, config):
         self.config = config.get("confluence", {})
 
+        # If disabled, skip required key validation
+        if not self.config.get("enabled", True):
+            self.enabled = False
+            return
+
         required_keys = ["host_url", "username", "password", "space_key"]
         missing_keys = [key for key in required_keys if not self.config.get(key)]
         if missing_keys:
@@ -152,8 +166,9 @@ class MkdocsToConfluence(BasePlugin):
 
         self.only_in_nav = True
 
-        if self.config["debug"]:
+        if self.config.get("debug", False):
             log.setLevel(logging.DEBUG)
+
 
         if "enabled_if_env" in self.config:
             env_name = self.config["enabled_if_env"]
@@ -193,6 +208,10 @@ class MkdocsToConfluence(BasePlugin):
         import json
 
         log = logging.getLogger("mkdocs.plugins")
+
+        if not getattr(self, "enabled", True):
+            log.info("Confluence plugin is disabled; skipping post-build step.")
+            return
 
         space_key = getattr(self, "space_key", None) or config.get(
             "confluence", {}
