@@ -1,5 +1,12 @@
 # Semantic Versioning Changelog
 
+## [1.2.2](https://github.com/NewDay-Data/python-mkdocs-to-confluence/compare/v1.2.1...v1.2.2) (2025-06-16)
+
+
+### Bug Fixes
+
+* correct build setup ([96e6580](https://github.com/NewDay-Data/python-mkdocs-to-confluence/commit/96e6580bb7f962e95233d088a7c25c40a3eaf31a))
+
 ## [1.2.1](https://github.com/NewDay-Data/python-mkdocs-to-confluence/compare/v1.2.0...v1.2.1) (2025-06-16)
 
 
