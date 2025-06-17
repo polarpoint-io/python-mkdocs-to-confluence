@@ -5,13 +5,10 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     [
-      "semantic-release-pypi-pyproject",
+      "semantic-release-pypi",
       {
         "pyprojectPath": "pyproject.toml",
-        "updateStrategy": "pyproject",
-        "buildCommand": "python -m build",
-        "upload": true,
-        "repositoryUrl": "https://ndartifactory.jfrog.io/artifactory/api/pypi/nexus_pypi"
+        "buildCommand": "python -m build"
       }
     ],
     "@semantic-release/github",
