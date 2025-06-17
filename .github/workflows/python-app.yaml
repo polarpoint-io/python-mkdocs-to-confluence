@@ -28,4 +28,4 @@ jobs:
     with:
       artifact_name: mkdocs_confluence_plugin
       repository_name: nexus_pypi
-      extra_plugins: git+https://github.com/ORG/semantic-release-pypi-pyproject.git
+      extra_plugins: git+https://github.com/abichinger/semantic-release-pypi-pyproject.git
