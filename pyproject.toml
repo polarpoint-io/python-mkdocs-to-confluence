@@ -31,6 +31,9 @@ packages = { find = { where = ["src"] } }
 [tool.setuptools.package-dir]
 "" = "src"
 
+[project.entry-points."mkdocs.plugins"]
+confluence = "mkdocs_confluence_plugin.plugin:ConfluencePlugin"
+
 [tool.pytest.ini_options]
 addopts = "--maxfail=1 --disable-warnings -q"
 testpaths = ["tests"]
