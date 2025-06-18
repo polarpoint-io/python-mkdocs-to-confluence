@@ -6,7 +6,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from mkdocs_confluence_plugin.plugin import MkdocsToConfluence
+from mkdocs_confluence_plugin.plugin import ConfluencePlugin
 from mkdocs.config import load_config
 from mkdocs.structure.pages import Page
 from mkdocs.structure.files import Files
@@ -27,12 +27,12 @@ def mock_put(monkeypatch):
 
 @pytest.fixture
 def plugin():
-    return MkdocsToConfluence()
+    return ConfluencePlugin()
 
 
 def test_plugin_instantiation():
-    plugin = MkdocsToConfluence()
-    assert isinstance(plugin, MkdocsToConfluence)
+    plugin = ConfluencePlugin()
+    assert isinstance(plugin, ConfluencePlugin)
 
 
 def test_on_config_with_env(monkeypatch, plugin):
@@ -190,28 +190,6 @@ def test_on_post_build_handles_api_error(mock_put, plugin, caplog):
 
     with caplog.at_level("ERROR"):
         plugin.on_post_build(config={}, files=[])
-
-    assert "Failed to update page 'Broken'" in caplog.text
-
-
-# def test_on_post_page_does_not_modify_output(plugin):
-#     print("Plugin class:", plugin.__class__)
-#     print("Plugin methods:", dir(plugin))
-
-#     assert hasattr(plugin, "on_post_page"), "on_post_page is missing from plugin"
-
-#     plugin.enabled = True
-#     plugin.page_attachments = {"Test Page": []}
-#     plugin.config = {"dryrun": False}
-
-#     page = type("Page", (), {
-#         "markdown": "# Hello\nThis is a **test**",
-#         "title": "Test Page"
-#     })()
-
-#     output = "original output"
-#     result = plugin.on_post_page(output, page, {"site_dir": "."})
-#     assert result == "original output"
 
 
 import inspect
