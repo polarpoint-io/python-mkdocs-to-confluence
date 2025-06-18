@@ -60,7 +60,7 @@ class DummyFile(object):
         pass
 
 
-class MkdocsToConfluence(BasePlugin):
+class ConfluencePlugin(BasePlugin):
     _id = 0
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
