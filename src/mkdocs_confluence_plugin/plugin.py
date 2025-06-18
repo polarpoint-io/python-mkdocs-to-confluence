@@ -134,9 +134,9 @@ class ConfluencePlugin(BasePlugin):
         nav_items = self.__recursive_search(nav.items, 0)
         log.debug(f"Nav: {nav_items}")
 
-        MkdocsToConfluence.tab_nav = nav_items.split("\n")
+        ConfluencePlugin.tab_nav = nav_items.split("\n")
 
-        log.info(f"Identified tabs: {MkdocsToConfluence.tab_nav}")
+        log.info(f"Identified tabs: {ConfluencePlugin.tab_nav}")
 
     def on_files(self, files, config):
         pages = files.documentation_pages()
@@ -171,7 +171,7 @@ class ConfluencePlugin(BasePlugin):
             password=self.config["password"],
         )
 
-        self.default_labels = ["dpe", "mkdocs"]
+        self.default_labels = ["cpe", "mkdocs"]
 
         self.only_in_nav = True
 
@@ -308,13 +308,13 @@ class ConfluencePlugin(BasePlugin):
         return output
 
     def on_page_content(self, html, page: Page, config, files):
-        MkdocsToConfluence._id += 1
+        ConfluencePlugin._id += 1
         # self.session.headers.update({"Authorization": f"Bearer {self.config['token']}"})
         self.session.auth = (self.config["username"], self.config["password"])
         if not self.enabled:
             return html
 
-        nav = [tab.strip() for tab in MkdocsToConfluence.tab_nav]
+        nav = [tab.strip() for tab in ConfluencePlugin.tab_nav]
 
         if self.only_in_nav:
             if not (page.title in nav or page.file.src_uri in nav):
@@ -512,7 +512,7 @@ class ConfluencePlugin(BasePlugin):
         page_id = self.find_page_id(page_name)
         if page_id:
             file_hash = self.get_file_sha1(filepath)
-            attachment_message = f"MkdocsToConfluence [v{file_hash}]"
+            attachment_message = f"ConfluencePlugin [v{file_hash}]"
             existing_attachment = self.get_attachment(page_id, filepath)
             if existing_attachment:
                 file_hash_regex = re.compile(r"\[v([a-f0-9]{40})]$")

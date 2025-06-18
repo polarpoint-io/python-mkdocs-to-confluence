@@ -58,7 +58,7 @@ def test_on_config_with_env(monkeypatch, plugin):
     assert plugin.confluence.url == "https://example.atlassian.net/wiki"
     assert plugin.confluence.username == "testuser"
     assert plugin.confluence.password == "secrettoken"
-    assert plugin.default_labels == ["dpe", "mkdocs"]
+    assert plugin.default_labels == ["cpe", "mkdocs"]
 
 
 
