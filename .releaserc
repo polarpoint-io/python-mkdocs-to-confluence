@@ -5,6 +5,12 @@
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "sed -i.bak 's/^version = \".*\"/version = \"${nextRelease.version}\"/' pyproject.toml"
+      }
+    ],
+    [
       "semantic-release-pypi",
       {
         "pyprojectPath": "pyproject.toml",

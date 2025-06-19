@@ -69,3 +69,9 @@ dev = [
     "atlassian-python-api",
     "black"
 ]
+
+[tool.semantic_release]
+version_variable = "pyproject.toml:project.version"
+
+[tool.semantic_release.build]
+command = "python -m build"
