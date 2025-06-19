@@ -8,6 +8,7 @@
         "@commitlint/config-conventional": "^12.1.1"
     },
    "devDependencies": {
+"@semantic-release/exec": "^6.0.3",
   "semantic-release-pypi": "^5.1.0",
   "@semantic-release/git": "^10.0.1",
   "@semantic-release/release-notes-generator": "^10.0.0",
