@@ -153,6 +153,7 @@ class ConfluencePlugin(BasePlugin):
         pass
 
     def on_config(self, config):
+        self.config = config.get("confluence", {}) 
         conf = self.config  # plugin config populated automatically
 
         # If disabled, skip required key validation
