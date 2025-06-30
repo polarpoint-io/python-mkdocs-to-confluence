@@ -153,39 +153,38 @@ class ConfluencePlugin(BasePlugin):
         pass
 
     def on_config(self, config):
-        self.config = config.get("confluence", {})
+        conf = self.config  # plugin config populated automatically
 
         # If disabled, skip required key validation
-        if not self.config.get("enabled", True):
+        if not conf.get("enabled", True):
             self.enabled = False
             return
 
-        if not self.config.get("username"):
-            self.config["username"] = os.environ.get("CONFLUENCE_USERNAME")
-        if not self.config.get("password"):
-            self.config["password"] = os.environ.get("CONFLUENCE_PASSWORD")
+        if not conf.get("username"):
+            conf["username"] = os.environ.get("CONFLUENCE_USERNAME")
+        if not conf.get("password"):
+            conf["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
         required_keys = ["host_url", "username", "password", "space_key"]
-        missing_keys = [key for key in required_keys if not self.config.get(key)]
+        missing_keys = [key for key in required_keys if not conf.get(key)]
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
 
         self.confluence = Confluence(
-            url=self.config["host_url"].replace("/rest/api/content", ""),
-            username=self.config["username"],
-            password=self.config["password"],
+            url=conf["host_url"].replace("/rest/api/content", ""),
+            username=conf["username"],
+            password=conf["password"],
         )
 
         self.default_labels = ["cpe", "mkdocs"]
 
         self.only_in_nav = True
 
-        if self.config.get("debug", False):
+        if conf.get("debug", False):
             log.setLevel(logging.DEBUG)
 
-
-        if "enabled_if_env" in self.config:
-            env_name = self.config["enabled_if_env"]
+        if "enabled_if_env" in conf:
+            env_name = conf["enabled_if_env"]
             if env_name:
                 self.enabled = os.environ.get(env_name) == "1"
                 if not self.enabled:
@@ -210,11 +209,12 @@ class ConfluencePlugin(BasePlugin):
             log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
             self.enabled = True
 
-        if self.config["dryrun"]:
+        if conf.get("dryrun", False):
             log.warning("- DRYRUN MODE turned ON")
             self.dryrun = True
         else:
             self.dryrun = False
+
 
     def on_post_build(self, config, files):
         import requests
