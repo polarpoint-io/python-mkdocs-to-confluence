@@ -65,7 +65,7 @@ class ConfluencePlugin(BasePlugin):
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
         ("github_base_url", config_options.Type(str, default=None)),
-        ("space", config_options.Type(str, default=None)),
+        ("space_key", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
         (
             "username",
@@ -159,6 +159,11 @@ class ConfluencePlugin(BasePlugin):
         if not self.config.get("enabled", True):
             self.enabled = False
             return
+
+        if not self.config.get("username"):
+            self.config["username"] = os.environ.get("CONFLUENCE_USERNAME")
+        if not self.config.get("password"):
+            self.config["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
         required_keys = ["host_url", "username", "password", "space_key"]
         missing_keys = [key for key in required_keys if not self.config.get(key)]
