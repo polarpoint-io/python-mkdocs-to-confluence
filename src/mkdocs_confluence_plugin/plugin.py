@@ -81,6 +81,7 @@ class ConfluencePlugin(BasePlugin):
         ("debug", config_options.Type(bool, default=False)),
         ("dryrun", config_options.Type(bool, default=False)),
         ("enable_footer", config_options.Type(bool, default=False)),
+        ("default_labels", config_options.Type(list, default=["cpe", "mkdocs"])),
     )
 
     def __init__(self):
@@ -91,10 +92,6 @@ class ConfluencePlugin(BasePlugin):
         self.flen = 1
         self.session = requests.Session()
         self.page_attachments = {}
-
-
-    def on_pre_build(self, config):
-        self.some_data = {}
 
     def on_pre_build(self, config):
         self.page_ids = {}
@@ -154,8 +151,8 @@ class ConfluencePlugin(BasePlugin):
         pass
 
     def on_config(self, config):
-        self.config = config.get("confluence", {}) 
-        conf = self.config  # plugin config populated automatically
+        self.config = config.get("confluence", {})
+        conf = self.config
 
         # If disabled, skip required key validation
         if not conf.get("enabled", True):
@@ -178,7 +175,8 @@ class ConfluencePlugin(BasePlugin):
             password=conf["password"],
         )
 
-        self.default_labels = ["cpe", "mkdocs"]
+        # Use config default labels or fallback to ["cpe", "mkdocs"]
+        self.default_labels = self.config.get("default_labels", ["cpe", "mkdocs"])
 
         self.only_in_nav = True
 
@@ -217,7 +215,6 @@ class ConfluencePlugin(BasePlugin):
         else:
             self.dryrun = False
 
-
     def on_post_build(self, config, **kwargs):
         files = kwargs.get("files")
         import requests
@@ -230,9 +227,9 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin is disabled; skipping post-build step.")
             return
 
-        space = getattr(self, "space", None) or config.get(
-            "confluence", {}
-        ).get("space")
+        space = getattr(self, "space", None) or config.get("confluence", {}).get(
+            "space"
+        )
 
         for page in getattr(self, "pages", []):
             title = page.get("title")
@@ -317,7 +314,6 @@ class ConfluencePlugin(BasePlugin):
 
     def on_page_content(self, html, page: Page, config, files):
         ConfluencePlugin._id += 1
-        # self.session.headers.update({"Authorization": f"Bearer {self.config['token']}"})
         self.session.auth = (self.config["username"], self.config["password"])
         if not self.enabled:
             return html
@@ -394,7 +390,7 @@ class ConfluencePlugin(BasePlugin):
             if self.config.get("enable_footer", False):
 
                 markdown_file_url = page.file.src_uri
-                confluence_warning_macro = f"""
+                confluence_info_macro = f"""
                 <ac:structured-macro ac:name="info">
                     <ac:rich-text-body>
                         <p style="font-size:small;">{MKDOCS_FOOTER}</p>
@@ -403,8 +399,8 @@ class ConfluencePlugin(BasePlugin):
                 </ac:structured-macro>
                 """
 
-                # Append the warning macro
-                html += confluence_warning_macro
+                # Append the info macro
+                html += confluence_info_macro
 
                 log.info(f"Added Confluence warning macro footer to '{page.title}'.")
 
@@ -524,217 +520,84 @@ class ConfluencePlugin(BasePlugin):
             if existing_attachment:
                 file_hash_regex = re.compile(r"\[v([a-f0-9]{40})]$")
                 existing_match = file_hash_regex.search(
-                    existing_attachment["version"]["message"]
+                    existing_attachment["comment"] or ""
                 )
-                if existing_match is not None and existing_match.group(1) == file_hash:
-                    log.debug(
-                        f"* '{page_name}' * Existing attachment skipping * {filepath}"
-                    )
+                if existing_match and existing_match.group(1) == file_hash:
+                    log.info(f"Attachment {filepath} is up to date.")
+                    return
                 else:
-                    self.update_attachment(
-                        page_id, filepath, existing_attachment, attachment_message
+                    log.info(f"Updating attachment {filepath}...")
+                    self.confluence.update_attachment(
+                        existing_attachment["id"], filepath, comment=attachment_message
                     )
             else:
-                self.create_attachment(page_id, filepath, attachment_message)
+                log.info(f"Adding attachment {filepath}...")
+                self.confluence.attach_file(
+                    page_id, filepath, comment=attachment_message
+                )
         else:
-            log.debug("PAGE DOES NOT EXISTS")
+            log.error(f"Page '{page_name}' not found. Cannot add attachment.")
 
-    def get_attachment(self, page_id, filepath):
-        name = os.path.basename(filepath)
-        log.debug(f"Get Attachment: PAGE ID: {page_id}, FILE: {filepath}")
+    def get_attachment(self, page_id, filename):
+        attachments = self.confluence.get_attachments(page_id)
+        for attachment in attachments.get("results", []):
+            if attachment["title"] == os.path.basename(filename):
+                return attachment
+        return None
 
-        url = self.config["host_url"] + "/" + page_id + "/child/attachment"
-        headers = {"X-Atlassian-Token": "no-check"}  # no content-type here!
-        log.debug(f"URL: {url}")
-
-        r = self.session.get(
-            url, headers=headers, params={"filename": name, "expand": "version"}
-        )
-        r.raise_for_status()
-        with nostdout():
-            response_json = r.json()
-        if response_json["size"]:
-            return response_json["results"][0]
-
-
-    def update_attachment(self, page_id, filepath, existing_attachment, message):
-        log.debug(f"Update Attachment: PAGE ID: {page_id}, FILE: {filepath}")
-
-        url = f"{self.config['host_url'].rstrip('/')}/rest/api/content/{page_id}/child/attachment/{existing_attachment['id']}/data"
-        headers = {"X-Atlassian-Token": "no-check"}
-
-        log.debug(f"URL: {url}")
-
-        filename = os.path.basename(filepath)
-        content_type, _ = mimetypes.guess_type(filepath)
-        if content_type is None:
-            content_type = "multipart/form-data"
-
-        files = {
-            "file": (filename, open(Path(filepath), "rb"), content_type)
-        }
-        data = {
-            "comment": message
-        }
-
-        if not self.dryrun:
-            try:
-                r = self.session.post(url, headers=headers, files=files, data=data)
-                r.raise_for_status()
-                log.debug(r.json())
-                log.debug("Returned status code %d", r.status_code)
-            except requests.exceptions.RequestException as e:
-                log.error(f"Failed to update attachment: {e}")
-                raise
-
-
-
-    def create_attachment(self, page_id, filepath, message):
-        log.debug(f"Create Attachment: PAGE ID: {page_id}, FILE: {filepath}")
-
-        url = self.config["host_url"] + "/" + page_id + "/child/attachment"
-        headers = {"X-Atlassian-Token": "no-check"}  # no content-type here!
-
-        log.debug(f"URL: {url}")
-
-        filename = os.path.basename(filepath)
-
-        # determine content-type
-        content_type, encoding = mimetypes.guess_type(filepath)
-        if content_type is None:
-            content_type = "multipart/form-data"
-        files = {
-            "file": (filename, open(filepath, "rb"), content_type),
-            "comment": message,
-        }
-        if not self.dryrun:
-            r = self.session.post(url, headers=headers, files=files)
-            log.debug(r.json())
-            r.raise_for_status()
-            log.debug("Returned status code %d", r.status_code)
-
-    @wait_until_result
     def find_page_id(self, page_name):
-        return self.confluence.get_page_id(space=self.config["space"], title=page_name)
+        if page_name in self.page_ids:
+            return self.page_ids[page_name]
+        else:
+            cql = f"title = \"{page_name}\" and space = \"{self.config['space']}\""
+            res = self.confluence.cql(cql, limit=1)
+            if res["size"] > 0:
+                page_id = res["results"][0]["content"]["id"]
+                self.page_ids[page_name] = page_id
+                return page_id
+            else:
+                return None
 
-    def add_page(self, page_name, parent_page_id, body, page: Page):
-        log.info(f"Adding Page: '{page_name}', parent ID: {parent_page_id}")
-        url = self.config["host_url"] + "/"
-        headers = {"Content-Type": "application/json"}
-
-        body_sha1 = hashlib.sha1(body.encode("utf-8")).hexdigest()
-
-        data = {
-            "type": "page",
-            "title": page_name,
-            "space": {"key": self.config["space"]},
-            "ancestors": [{"id": parent_page_id}],
-            "body": {
-                "storage": {
-                    "value": body,
-                    "representation": "storage",
-                }
-            },
-        }
-
-        if self.dryrun:
-            return
-
-        r = self.session.post(url, json=data, headers=headers)
-        log.debug("Returned status code %d", r.status_code)
-        if r.status_code <= 300:
-            log.info(r.json())
-        r.raise_for_status()
-
-        # Propagate labels
-        # Add body SHA
-        self.update_page(page_name, body, page)
-
-    def update_page(self, page_name, body, page: Page):
-        log.info(f"Updating...")
+    def find_parent_name_of_page(self, page_name):
         page_id = self.find_page_id(page_name)
+        if page_id:
+            page = self.confluence.get_page_by_id(page_id, expand="ancestors")
+            ancestors = page.get("ancestors", [])
+            if ancestors:
+                return ancestors[-1]["title"]
+        return None
 
+    def update_page(self, title, body, page):
+        page_id = self.find_page_id(title)
         if not page_id:
-            log.error(f"Page '{page_name}' doesn't exist yet!")
-
-        if self.dryrun:
+            log.error(f"Cannot update page '{title}', page id not found.")
             return
 
-        page_data = self.confluence.get_page_by_id(page_id, expand="version")
-        old_body_sha1 = page_data.get("version").get("message")
+        current_page = self.confluence.get_page_by_id(page_id, expand="version")
+        version_number = current_page["version"]["number"] + 1
 
-        new_body_sha1 = hashlib.sha1(body.encode("utf-8")).hexdigest()
-
-        log.debug(f"Old Body SHA1 '{old_body_sha1}'")
-        log.debug(f"New body SHA1 '{new_body_sha1}'")
-
-        if str(new_body_sha1) == str(old_body_sha1):
-            log.info(f"Content is up to date - skipping update.")
-            return
-
-        page_version = self.find_page_version(page_name) + 1
-        labels = set(self.default_labels + page.meta.get("tags", list()))
-        log.info(f"Used labels: {labels}")
+        labels = set(self.default_labels + page.meta.get("tags", []))
 
         data = {
-            "id": page_id,
-            "title": page_name,
+            "version": {"number": version_number},
+            "title": title,
             "type": "page",
-            "space": {"key": self.config["space"]},
-            "body": {
-                "storage": {
-                    "value": body,
-                    "representation": "storage",
-                }
-            },
-            "version": {
-                "number": page_version,
-                "minorEdit": True,
-                "message": new_body_sha1,
-            },
-            "metadata": {"labels": [{"name": tag} for tag in labels]},
+            "body": {"storage": {"value": body, "representation": "storage"}},
+            "metadata": {"labels": [{"name": label} for label in labels]},
         }
 
-        url = self.config["host_url"] + "/" + page_id
-        r = self.session.put(
-            url, json=data, headers={"Content-Type": "application/json"}
-        )
-        r.raise_for_status()
+        self.confluence.update_page(page_id, data)
 
-    def find_page_version(self, page_name):
-        log.info(f"Retrieving page version.")
-        name_confl = page_name.replace(" ", "+")
-        url = (
-            self.config["host_url"]
-            + "?title="
-            + name_confl
-            + "&spaceKey="
-            + self.config["space"]
-            + "&expand=version"
-        )
-        r = self.session.get(url)
-        r.raise_for_status()
-        with nostdout():
-            response_json = r.json()
-        if response_json["results"] is not None:
-            log.debug(f"VERSION: {response_json['results'][0]['version']['number']}")
-            return response_json["results"][0]["version"]["number"]
-        else:
-            log.debug("PAGE DOES NOT EXISTS")
-            return None
+    def add_page(self, title, parent_id, body, page):
+        labels = set(self.default_labels + page.meta.get("tags", []))
 
-    def find_parent_name_of_page(self, name):
-        log.debug(f"Looking for the Parent page.")
-        idp = self.find_page_id(name)
-        url = self.config["host_url"] + "/" + idp + "?expand=ancestors"
+        data = {
+            "type": "page",
+            "title": title,
+            "ancestors": [{"id": parent_id}],
+            "space": {"key": self.config["space"]},
+            "body": {"storage": {"value": body, "representation": "storage"}},
+            "metadata": {"labels": [{"name": label} for label in labels]},
+        }
 
-        r = self.session.get(url)
-        r.raise_for_status()
-        with nostdout():
-            response_json = r.json()
-        if response_json:
-            log.debug(f"PARENT NAME: {response_json['ancestors'][-1]['title']}")
-            return response_json["ancestors"][-1]["title"]
-        else:
-            log.debug("PAGE DOES NOT HAVE PARENT")
-            return None
+        self.confluence.create_page(data)
