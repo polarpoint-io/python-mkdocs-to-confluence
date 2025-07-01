@@ -299,7 +299,7 @@ class ConfluencePlugin(BasePlugin):
         relative_path = page.file.src_path
         github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
 
-        header = f"Update source on GitHub]({github_url})\n\n"
+        header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
     def on_post_page(self, output, page: Page, config):
@@ -395,11 +395,10 @@ class ConfluencePlugin(BasePlugin):
 
                 markdown_file_url = page.file.src_uri
                 confluence_warning_macro = f"""
-                <ac:structured-macro ac:name="warning">
-                    <ac:parameter ac:name="title">Important</ac:parameter>
+                <ac:structured-macro ac:name="info">
                     <ac:rich-text-body>
-                        <p>{MKDOCS_FOOTER}</p>
-                        <p>📄 <a href='{markdown_file_url}'>Source Markdown file</a></p>
+                        <p style="font-size:small;">{MKDOCS_FOOTER}</p>
+                        <p style="font-size:small;">📄 <a href='{markdown_file_url}'>Markdown</a></p>
                     </ac:rich-text-body>
                 </ac:structured-macro>
                 """
