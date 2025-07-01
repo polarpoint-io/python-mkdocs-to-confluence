@@ -66,7 +66,7 @@ class ConfluencePlugin(BasePlugin):
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
         ("github_base_url", config_options.Type(str, default=None)),
-        ("space_key", config_options.Type(str, default=None)),
+        ("space", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
         (
             "username",
@@ -167,7 +167,7 @@ class ConfluencePlugin(BasePlugin):
         if not conf.get("password"):
             conf["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
-        required_keys = ["host_url", "username", "password", "space_key"]
+        required_keys = ["host_url", "username", "password", "space"]
         missing_keys = [key for key in required_keys if not conf.get(key)]
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
@@ -229,9 +229,9 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin is disabled; skipping post-build step.")
             return
 
-        space_key = getattr(self, "space_key", None) or config.get(
+        space = getattr(self, "space", None) or config.get(
             "confluence", {}
-        ).get("space_key")
+        ).get("space")
 
         for page in getattr(self, "pages", []):
             title = page.get("title")
@@ -270,7 +270,7 @@ class ConfluencePlugin(BasePlugin):
                 data = {
                     "type": "page",
                     "title": title,
-                    "space": {"key": space_key},
+                    "space": {"key": space},
                     "body": {"storage": {"value": body, "representation": "storage"}},
                 }
 
