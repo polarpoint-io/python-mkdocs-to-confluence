@@ -218,7 +218,9 @@ class ConfluencePlugin(BasePlugin):
             self.dryrun = False
 
 
-    def on_post_build(self, config, files):
+
+    def on_post_build(self, *, config, files):
+
         import requests
         import logging
         import json
