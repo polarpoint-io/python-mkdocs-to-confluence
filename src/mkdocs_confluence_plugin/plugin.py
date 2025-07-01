@@ -601,17 +601,24 @@ class ConfluencePlugin(BasePlugin):
         self.confluence.update_page(page_id, data)
 
 
+    def add_page(self, page_title, parent_id, body, page):
+        tags = []
+        if hasattr(page, "meta") and isinstance(page.meta, dict):
+            tags = page.meta.get("tags", [])
 
-    def add_page(self, title, parent_id, body, page):
-        labels = set(self.default_labels + page.meta.get("tags", []))
+        labels = list(set(self.default_labels + tags))
 
-        data = {
-            "type": "page",
-            "title": title,
-            "ancestors": [{"id": parent_id}],
-            "space": {"key": self.config["space"]},
-            "body": {"storage": {"value": body, "representation": "storage"}},
-            "metadata": {"labels": [{"name": label} for label in labels]},
-        }
+        response = self.confluence.create_page(
+            space=self.space,
+            title=str(page_title),
+            body=body,
+            parent_id=parent_id,
+            type="page",
+            representation="storage"
+        )
 
-        self.confluence.create_page(data)
+        # add labels
+        for label in labels:
+            self.confluence.set_page_label(response['id'], label)
+
+        log.debug(f"Created new page '{page_title}' under parent ID {parent_id}")
