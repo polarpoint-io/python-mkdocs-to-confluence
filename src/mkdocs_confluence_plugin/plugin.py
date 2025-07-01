@@ -576,12 +576,16 @@ class ConfluencePlugin(BasePlugin):
         current_page = self.confluence.get_page_by_id(page_id, expand="version")
         version_number = current_page["version"]["number"] + 1
 
-        labels = set(self.default_labels + page.meta.get("tags", []))
+        tags = []
+        if hasattr(page, "meta") and isinstance(page.meta, dict):
+            tags = page.meta.get("tags", [])
+
+        labels = set(self.default_labels + tags)
 
         data = {
-            "id": page_id,                   # Add this line!
+            "id": page_id,
             "type": "page",
-            "title": title,
+            "title": str(title),  # cast to string here
             "version": {"number": version_number},
             "body": {
                 "storage": {
@@ -595,6 +599,7 @@ class ConfluencePlugin(BasePlugin):
         }
 
         self.confluence.update_page(page_id, data)
+
 
 
     def add_page(self, title, parent_id, body, page):
