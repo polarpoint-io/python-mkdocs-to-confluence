@@ -556,37 +556,38 @@ class ConfluencePlugin(BasePlugin):
         if response_json["size"]:
             return response_json["results"][0]
 
+
     def update_attachment(self, page_id, filepath, existing_attachment, message):
         log.debug(f"Update Attachment: PAGE ID: {page_id}, FILE: {filepath}")
 
-        url = (
-            self.config["host_url"]
-            + "/"
-            + page_id
-            + "/child/attachment/"
-            + existing_attachment["id"]
-            + "/data"
-        )
-        headers = {"X-Atlassian-Token": "no-check"}  # no content-type here!
+        url = f"{self.config['host_url'].rstrip('/')}/rest/api/content/{page_id}/child/attachment/{existing_attachment['id']}/data"
+        headers = {"X-Atlassian-Token": "no-check"}
 
         log.debug(f"URL: {url}")
 
         filename = os.path.basename(filepath)
-
-        # determine content-type
-        content_type, encoding = mimetypes.guess_type(filepath)
+        content_type, _ = mimetypes.guess_type(filepath)
         if content_type is None:
             content_type = "multipart/form-data"
+
         files = {
-            "file": (filename, open(Path(filepath), "rb"), content_type),
-            "comment": message,
+            "file": (filename, open(Path(filepath), "rb"), content_type)
+        }
+        data = {
+            "comment": message
         }
 
         if not self.dryrun:
-            r = self.session.post(url, headers=headers, files=files)
-            r.raise_for_status()
-            log.debug(r.json())
-            log.debug("Returned status code %d", r.status_code)
+            try:
+                r = self.session.post(url, headers=headers, files=files, data=data)
+                r.raise_for_status()
+                log.debug(r.json())
+                log.debug("Returned status code %d", r.status_code)
+            except requests.exceptions.RequestException as e:
+                log.error(f"Failed to update attachment: {e}")
+                raise
+
+
 
     def create_attachment(self, page_id, filepath, message):
         log.debug(f"Create Attachment: PAGE ID: {page_id}, FILE: {filepath}")
