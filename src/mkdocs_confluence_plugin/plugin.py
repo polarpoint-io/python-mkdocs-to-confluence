@@ -579,14 +579,23 @@ class ConfluencePlugin(BasePlugin):
         labels = set(self.default_labels + page.meta.get("tags", []))
 
         data = {
-            "version": {"number": version_number},
-            "title": title,
+            "id": page_id,                   # Add this line!
             "type": "page",
-            "body": {"storage": {"value": body, "representation": "storage"}},
-            "metadata": {"labels": [{"name": label} for label in labels]},
+            "title": title,
+            "version": {"number": version_number},
+            "body": {
+                "storage": {
+                    "value": body,
+                    "representation": "storage"
+                }
+            },
+            "metadata": {
+                "labels": [{"name": label} for label in labels]
+            }
         }
 
         self.confluence.update_page(page_id, data)
+
 
     def add_page(self, title, parent_id, body, page):
         labels = set(self.default_labels + page.meta.get("tags", []))
