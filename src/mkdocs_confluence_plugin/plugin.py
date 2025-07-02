@@ -20,7 +20,6 @@ from pathlib import Path
 from mkdocs.structure.nav import Navigation, Section
 from mkdocs.structure.pages import Page
 from atlassian import Confluence
-from pathlib import Path
 from urllib.parse import quote
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
@@ -93,9 +92,15 @@ class ConfluencePlugin(BasePlugin):
         self.session = requests.Session()
         self.page_attachments = {}
 
-    def on_pre_build(self, config):
+        # Initialize page tracking structures
         self.page_ids = {}
         self.page_versions = {}
+        self.pages = []
+
+    def on_pre_build(self, config):
+        self.page_ids.clear()
+        self.page_versions.clear()
+        self.pages.clear()
 
     def load_pages(self):
         pages = []
@@ -104,6 +109,7 @@ class ConfluencePlugin(BasePlugin):
                 content = f.read()
             rendered = self.renderer(content)
             pages.append({"title": file_path.stem, "body": rendered})
+        self.pages = pages
         return pages
 
     def __recursive_search(self, items, depth: int):
@@ -518,107 +524,119 @@ class ConfluencePlugin(BasePlugin):
             attachment_message = f"ConfluencePlugin [v{file_hash}]"
             existing_attachment = self.get_attachment(page_id, filepath)
             if existing_attachment:
-                file_hash_regex = re.compile(r"\[v([a-f0-9]{40})]$")
-                existing_match = file_hash_regex.search(
-                    existing_attachment["comment"] or ""
-                )
-                if existing_match and existing_match.group(1) == file_hash:
-                    log.info(f"Attachment {filepath} is up to date.")
+                file_hash_regex = re.compile(r"\[v([a-f0-9]+)\]")
+                current_hash = file_hash_regex.search(existing_attachment.get("metadata", ""))
+                if current_hash and current_hash.group(1) == file_hash:
+                    log.info(f"Attachment '{filepath.name}' is up-to-date. Skipping upload.")
                     return
                 else:
-                    log.info(f"Updating attachment {filepath}...")
-                    self.confluence.update_attachment(
-                        existing_attachment["id"], filepath, comment=attachment_message
-                    )
-            else:
-                log.info(f"Adding attachment {filepath}...")
-                self.confluence.attach_file(
-                    page_id, filepath, comment=attachment_message
-                )
+                    self.delete_attachment(existing_attachment["id"])
+                    log.info(f"Deleted outdated attachment '{filepath.name}'.")
+            self.upload_attachment(page_id, filepath, attachment_message)
         else:
-            log.error(f"Page '{page_name}' not found. Cannot add attachment.")
+            log.error(f"Cannot find Confluence page id for '{page_name}'. Attachment skipped.")
 
-    def get_attachment(self, page_id, filename):
-        attachments = self.confluence.get_attachments(page_id)
-        for attachment in attachments.get("results", []):
-            if attachment["title"] == os.path.basename(filename):
-                return attachment
+    def get_attachment(self, page_id, filepath):
+        url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+        params = {"filename": filepath.name}
+        response = self.session.get(url, params=params)
+        if response.status_code == 200:
+            results = response.json().get("results", [])
+            if results:
+                return results[0]
         return None
 
-    def find_page_id(self, page_name):
-        if page_name in self.page_ids:
-            return self.page_ids[page_name]
+    def upload_attachment(self, page_id, filepath, comment):
+        url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+        files = {"file": (filepath.name, open(filepath, "rb"), mimetypes.guess_type(filepath.name)[0])}
+        data = {"comment": comment}
+        response = self.session.post(url, files=files, data=data)
+        if response.status_code in [200, 201]:
+            log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
         else:
-            cql = f"title = \"{page_name}\" and space = \"{self.config['space']}\""
-            res = self.confluence.cql(cql, limit=1)
-            if res["size"] > 0:
-                page_id = res["results"][0]["content"]["id"]
-                self.page_ids[page_name] = page_id
-                return page_id
-            else:
-                return None
+            log.error(f"Failed to upload attachment '{filepath.name}' with status {response.status_code}.")
 
-    def find_parent_name_of_page(self, page_name):
-        page_id = self.find_page_id(page_name)
-        if page_id:
-            page = self.confluence.get_page_by_id(page_id, expand="ancestors")
-            ancestors = page.get("ancestors", [])
-            if ancestors:
-                return ancestors[-1]["title"]
+    def delete_attachment(self, attachment_id):
+        url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
+        response = self.session.delete(url)
+        if response.status_code == 204:
+            log.info(f"Deleted attachment ID {attachment_id}.")
+        else:
+            log.error(f"Failed to delete attachment ID {attachment_id} with status {response.status_code}.")
+
+    def find_page_id(self, title):
+        if title in self.page_ids:
+            return self.page_ids[title]
+
+        # Search page in Confluence space by title
+        cql = f"title = \"{title}\" and space = \"{self.config['space']}\""
+        results = self.confluence.cql(cql)
+        if results.get("results"):
+            page = results["results"][0]
+            page_id = page["id"]
+            self.page_ids[title] = page_id
+            self.page_versions[title] = page.get("version", {}).get("number", 1)
+            return page_id
         return None
 
-    def update_page(self, title, body, page):
-        page_id = self.find_page_id(title)
+    def find_parent_name_of_page(self, title):
+        # This is a stub for retrieving parent name - implement as needed
+        return self.config.get("parent_page_name")
+
+    def update_page(self, title, body, page_obj):
+        page_id = self.page_ids.get(title)
         if not page_id:
-            log.error(f"Cannot update page '{title}', page id not found.")
+            log.error(f"Cannot update page '{title}' because page ID not found.")
             return
 
-        current_page = self.confluence.get_page_by_id(page_id, expand="version")
-        version_number = current_page["version"]["number"] + 1
-
-        tags = []
-        if hasattr(page, "meta") and isinstance(page.meta, dict):
-            tags = page.meta.get("tags", [])
-
-        labels = set(self.default_labels + tags)
-
+        version = self.page_versions.get(title, 1) + 1
         data = {
-            "id": page_id,
+            "version": {"number": version},
+            "title": title,
             "type": "page",
-            "title": str(title),  # cast to string here
-            "version": {"number": version_number},
-            "body": {
-                "storage": {
-                    "value": body,
-                    "representation": "storage"
-                }
-            },
-            "metadata": {
-                "labels": [{"name": label} for label in labels]
-            }
+            "body": {"storage": {"value": body, "representation": "storage"}},
         }
 
-        self.confluence.update_page(page_id, data)
+        if self.dryrun:
+            log.info(f"DRYRUN: Would update page '{title}' to version {version}")
+            return
 
+        response = self.confluence.update_page(page_id, title, body, version=version)
+        if response:
+            log.info(f"Updated page '{title}' to version {version}")
+            self.page_versions[title] = version
+        else:
+            log.error(f"Failed to update page '{title}'")
 
-    def add_page(self, page_title, parent_id, body, page):
-        tags = []
-        if hasattr(page, "meta") and isinstance(page.meta, dict):
-            tags = page.meta.get("tags", [])
+    def add_page(self, title, parent_id, body, page_obj):
+        data = {
+            "type": "page",
+            "title": title,
+            "space": {"key": self.config["space"]},
+            "ancestors": [{"id": parent_id}],
+            "body": {"storage": {"value": body, "representation": "storage"}},
+        }
 
-        labels = list(set(self.default_labels + tags))
+        if self.dryrun:
+            log.info(f"DRYRUN: Would add page '{title}' under parent ID {parent_id}")
+            return
 
         response = self.confluence.create_page(
-            space=self.space,
-            title=str(page_title),
+            space=self.config["space"],
+            title=title,
             body=body,
             parent_id=parent_id,
-            type="page",
-            representation="storage"
+            representation="storage",
         )
+        if response:
+            log.info(f"Added page '{title}' under parent ID {parent_id}")
+            page_id = response.get("id")
+            if page_id:
+                self.page_ids[title] = page_id
+                self.page_versions[title] = 1
+        else:
+            log.error(f"Failed to add page '{title}'")
 
-        # add labels
-        for label in labels:
-            self.confluence.set_page_label(response['id'], label)
+    def renderer(self, text):
+        return self.confluence_mistune(text)
 
-        log.debug(f"Created new page '{page_title}' under parent ID {parent_id}")
