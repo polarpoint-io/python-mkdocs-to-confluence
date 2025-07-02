@@ -394,13 +394,14 @@ class ConfluencePlugin(BasePlugin):
             page_id = self.find_page_id(page.title)
 
             if self.config.get("enable_footer", False):
+                relative_path = page.file.src_path
+                github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
 
-                markdown_file_url = page.file.src_uri
                 confluence_info_macro = f"""
                 <ac:structured-macro ac:name="info">
                     <ac:rich-text-body>
                         <p style="font-size:small;">{MKDOCS_FOOTER}</p>
-                        <p style="font-size:small;">📄 <a href='{markdown_file_url}'>Markdown</a></p>
+                        <p style="font-size:small;">✏️ <a href="{github_url}">Edit this page on GitHub</a></p>
                     </ac:rich-text-body>
                 </ac:structured-macro>
                 """
