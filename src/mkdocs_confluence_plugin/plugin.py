@@ -564,20 +564,29 @@ class ConfluencePlugin(BasePlugin):
         else:
             log.error(f"Failed to delete attachment ID {attachment_id} with status {response.status_code}.")
 
+
     def find_page_id(self, title):
         if title in self.page_ids:
             return self.page_ids[title]
 
-        # Search page in Confluence space by title
-        cql = f"title = \"{title}\" and space = \"{self.config['space']}\""
+        cql = f'title = "{title}" and space = "{self.config["space"]}"'
         results = self.confluence.cql(cql)
         if results.get("results"):
             page = results["results"][0]
-            page_id = page["id"]
+            # Check if 'id' is at top level or inside 'content'
+            if "id" in page:
+                page_id = page["id"]
+            elif "content" in page and "id" in page["content"]:
+                page_id = page["content"]["id"]
+            else:
+                log.error(f"Cannot find 'id' in page result for title '{title}'")
+                return None
             self.page_ids[title] = page_id
             self.page_versions[title] = page.get("version", {}).get("number", 1)
             return page_id
         return None
+
+
 
     def find_parent_name_of_page(self, title):
         # This is a stub for retrieving parent name - implement as needed
