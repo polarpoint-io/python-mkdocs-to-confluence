@@ -302,7 +302,7 @@ class ConfluencePlugin(BasePlugin):
         relative_path = page.file.src_path
         github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
 
-        header = f"[Update markdown]({github_url})\n\n"
+        header = f"[Edit source in GitHub]({github_url})\n\n"
         return header + markdown
 
     def on_post_page(self, output, page: Page, config):
@@ -401,7 +401,7 @@ class ConfluencePlugin(BasePlugin):
                 <ac:structured-macro ac:name="info">
                     <ac:rich-text-body>
                         <p style="font-size:small;">{MKDOCS_FOOTER}</p>
-                        <p style="font-size:small;">✏️ <a href="{github_url}">Edit this page on GitHub</a></p>
+                        <p style="font-size:small;">✏️ <a href="{github_url}">Edit source in GitHub</a></p>
                     </ac:rich-text-body>
                 </ac:structured-macro>
                 """
