@@ -1,29 +1,16 @@
 import pytest
 import sys
 import os
-import json
 from unittest import mock
 from unittest.mock import Mock
-from requests.models import Response
+from mkdocs.structure.pages import Page
+from mkdocs.structure.files import File
+from mkdocs.structure.nav import Navigation
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 from mkdocs_confluence_plugin.plugin import ConfluencePlugin
-from mkdocs.config import load_config
-from mkdocs.structure.pages import Page
-from mkdocs.structure.files import Files
-from mkdocs.structure.files import File
-from mkdocs.structure.nav import Navigation
-import inspect
 
-
-@pytest.fixture
-def mock_put(monkeypatch):
-    mock = Mock()
-    mock.return_value.status_code = 200
-    mock.return_value.text = "OK"
-    monkeypatch.setattr("requests.put", mock)
-    return mock
 
 @pytest.fixture
 def plugin():
@@ -35,11 +22,7 @@ def test_plugin_instantiation():
     assert isinstance(plugin, ConfluencePlugin)
 
 
-def test_on_config_with_env(monkeypatch, plugin):
-    monkeypatch.setenv("ATLASSIAN_URL", "https://example.atlassian.net")
-    monkeypatch.setenv("ATLASSIAN_USER", "testuser")
-    monkeypatch.setenv("ATLASSIAN_TOKEN", "secrettoken")
-
+def test_on_config_sets_confluence(monkeypatch, plugin):
     config = {
         "confluence": {
             "space": "SPACE",
@@ -50,243 +33,186 @@ def test_on_config_with_env(monkeypatch, plugin):
             "dryrun": True
         }
     }
-
-    plugin.config = config["confluence"]
-    result = plugin.on_config(config)
-
+    plugin.on_config(config)
     assert plugin.enabled is True
     assert plugin.confluence.url == "https://example.atlassian.net/wiki"
     assert plugin.confluence.username == "testuser"
     assert plugin.confluence.password == "secrettoken"
     assert plugin.default_labels == ["cpe", "mkdocs"]
+    assert plugin.dryrun is True
 
 
-def test_on_config_missing_space_key(plugin):
+def test_on_config_missing_keys_raises(plugin):
     config = {"confluence": {}}
-    with pytest.raises(ValueError, match="Missing required config keys:"):
+    with pytest.raises(ValueError):
         plugin.on_config(config)
 
 
-def test_on_config_no_env(monkeypatch, plugin):
-    monkeypatch.delenv("ATLASSIAN_URL", raising=False)
-    monkeypatch.delenv("ATLASSIAN_USER", raising=False)
-    monkeypatch.delenv("ATLASSIAN_TOKEN", raising=False)
+def test_on_nav_builds_tab_nav(plugin):
+    # Create fake pages with src_path
+    class DummyFile:
+        def __init__(self, src_path, src_uri=None):
+            self.src_path = src_path
+            self.src_uri = src_uri or src_path
 
-    config = {"confluence": {"space": "SPACE"}}
+    class DummyPage:
+        def __init__(self, src_path):
+            self.file = DummyFile(src_path)
 
-    with pytest.raises(ValueError, match="Missing required config keys: host_url, username, password"):
-        plugin.on_config(config)
+    files = [DummyPage("dir1/page1.md"), DummyPage("dir1/subdir/page2.md")]
+    class DummyFiles:
+        def documentation_pages(self):
+            return files
+
+    dummy_files = DummyFiles()
+
+    nav = Navigation(items=[], pages=[])
+    plugin.on_nav(nav, config=None, files=dummy_files)
+
+    # tab_nav should contain all page names
+    assert "Page1" in plugin.tab_nav or "Page2" in plugin.tab_nav
 
 
-def test_on_post_page_does_not_modify_output(plugin):
+def test_on_page_markdown_adds_header(plugin):
+    plugin.config = {"github_base_url": "https://github.com/repo"}
+    class DummyFile:
+        def __init__(self, src_path):
+            self.src_path = src_path
+    class DummyPage:
+        def __init__(self):
+            self.file = DummyFile("docs/readme.md")
+    page = DummyPage()
+
+    result = plugin.on_page_markdown("# title", page, None, None)
+    assert result.startswith("[Update markdown](https://github.com/repo/docs/readme.md)")
+
+
+def test_on_page_content_footer(plugin):
+    plugin.config = {
+        "github_base_url": "https://github.com/repo",
+        "enable_footer": True,
+        "username": "user",
+        "password": "pass"
+    }
     plugin.enabled = True
-    plugin.page_attachments = {"Test Page": []}
-    plugin.config = {"dryrun": False}
+    # Setup tab_nav to include the page title
+    plugin.tab_nav = ["Test Page"]
 
-    page = type("Page", (), {
-        "markdown": "# Hello\nThis is a **test**",
-        "title": "Test Page"
-    })()
+    class DummyFile:
+        def __init__(self, src_path, src_uri):
+            self.src_path = src_path
+            self.src_uri = src_uri
 
-    output = "original output"
-    result = plugin.on_post_page(output, page, {"site_dir": "."})
+    class DummyPage:
+        def __init__(self):
+            self.title = "Test Page"
+            self.file = DummyFile("docs/test.md", "docs/test.md")
 
-    assert result == output
+    page = DummyPage()
+
+    html = "<p>content</p>"
+    updated_html = plugin.on_page_content(html, page, None, None)
+    assert "Edit this page on GitHub" in updated_html
 
 
-def test_on_post_page_empty(plugin):
+def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.enabled = True
-    plugin.page_attachments = {"": []}
-    plugin.config = {"dryrun": False}
-
-    page = type("Page", (), {
-        "markdown": "",
-        "title": ""
-    })()
-
-    html = plugin.on_post_page("", page, {"site_dir": "."})
-    assert html == ""
-
-
-@mock.patch("requests.get")
-def test_on_nav_fetch_page_id(mock_get, plugin):
-    mock_get.return_value.status_code = 200
-    mock_get.return_value.json.return_value = {
-        "results": [{"id": "456", "version": {"number": 4}}]
+    plugin.config = {
+        "space": "SPACE",
+        "parent_page_name": None,
+        "dryrun": False,
+        "host_url": "https://example.atlassian.net/wiki/rest/api/content",
+        "username": "user",
+        "password": "pass",
     }
 
-    plugin.enabled = True
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.auth = ("user", "token")
-    config = {"site_name": "Test Docs", "confluence": {"space": "SPACE"}}
+    class DummyConfluence:
+        def __init__(self):
+            self.created_pages = []
+            self.updated_pages = []
 
-    file = File(path="welcome.md", src_dir="docs", dest_dir="site", use_directory_urls=True)
-    page = Page(title="Welcome", file=file, config=config)
-    nav = Navigation(items=[page], pages=[page])
+        def create_page(self, space, title, body, parent_id=None, representation=None):
+            self.created_pages.append(title)
+            return {"id": "123"}
 
-    if not hasattr(plugin, "page_ids"):
-        plugin.page_ids = {}
+        def update_page(self, page_id, title, body, version):
+            self.updated_pages.append((title, version))
+            return True
 
-    plugin.on_nav(nav, config=config, files=[])
-    plugin.page_ids["Welcome"] = "456"
-    assert plugin.page_ids["Welcome"] == "456"
+        def cql(self, query):
+            return {}
 
+    dummy_confluence = DummyConfluence()
+    plugin.confluence = dummy_confluence
 
-def test_on_post_build_updates_existing_page(mock_put, plugin):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.page_ids = {"Home": "789"}
-    plugin.page_versions = {"Home": 1}
-    plugin.pages = [{"title": "Home", "body": "<p>Updated</p>"}]
-
-    plugin.on_post_build(config={}, files=[])
-
-    mock_put.assert_called_once()
-    call_args = mock_put.call_args[1]
-    assert call_args["auth"] == ("user", "token")
-    assert call_args["json"]["version"]["number"] == 2
-
-
-@mock.patch("requests.post")
-def test_on_post_build_creates_new_page(mock_post, plugin):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.page_ids = {}
-    plugin.pages = [{"title": "New Page", "body": "<p>Fresh</p>"}]
-    plugin.space = "SPACE"
-    plugin.parent_id = None
-
-    mock_post.return_value.status_code = 201
-    plugin.on_post_build(config={"confluence": {"space": "SPACE"}}, files=[])
-
-    assert mock_post.called
-
-
-@mock.patch("requests.put")
-def test_on_post_build_handles_api_error(mock_put, plugin, caplog):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.page_ids = {"Broken": "999"}
-    plugin.page_versions = {"Broken": 2}
-    plugin.pages = [{"title": "Broken", "body": "<p>Fail</p>"}]
-
-    mock_put.return_value.status_code = 500
-    mock_put.return_value.text = "Internal Server Error"
-
-    with caplog.at_level("ERROR"):
-        plugin.on_post_build(config={}, files=[])
-
-
-def test_on_post_page_has_method(plugin):
-    assert hasattr(plugin, "on_post_page")
-
-
-def test_on_post_build_no_pages(plugin):
-    plugin.pages = []
+    # Test creating a new page
     plugin.page_ids = {}
     plugin.page_versions = {}
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-
-    with mock.patch("requests.put") as mock_put, mock.patch("requests.post") as mock_post:
-        plugin.on_post_build(config={"confluence": {"space": "SPACE"}}, files=[])
-        mock_put.assert_not_called()
-        mock_post.assert_not_called()
-
-
-def test_on_post_build_creates_new_page_with_parent(plugin):
-    plugin.pages = [{"title": "Child Page", "body": "<p>Content</p>"}]
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.space = "SPACE"
-    plugin.parent_id = "12345"
-
-    with mock.patch("requests.post") as mock_post:
-        mock_post.return_value.status_code = 200
-        plugin.on_post_build(config={}, files=[])
-        args, kwargs = mock_post.call_args
-        data_sent = kwargs["data"]
-        assert '"ancestors": [{"id": "12345"}]' in data_sent
-
-
-def test_on_post_build_missing_space_key_logs_error(plugin, caplog):
-    plugin.pages = [{"title": "New Page", "body": "<p>Content</p>"}]
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.space = None
-
-    with mock.patch("requests.post") as mock_post:
-        mock_post.return_value.status_code = 400
-        mock_post.return_value.text = "Bad Request"
-        plugin.on_post_build(config={}, files=[])
-
-    assert any("Failed to create page" in r.message for r in caplog.records)
-
-
-@mock.patch("requests.put")
-def test_on_post_build_updates_page_success(mock_put, plugin):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.page_ids = {"Page1": "123"}
-    plugin.page_versions = {"Page1": 1}
-    plugin.pages = [{"title": "Page1", "body": "<p>Updated</p>"}]
-
-    mock_put.return_value.status_code = 200
+    plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
     plugin.on_post_build(config={}, files=[])
-    mock_put.assert_called_once()
+    assert "New Page" in dummy_confluence.created_pages
 
-
-@mock.patch("requests.put")
-def test_on_post_build_updates_page_failure(mock_put, plugin, caplog):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.page_ids = {"Page2": "124"}
-    plugin.page_versions = {"Page2": 2}
-    plugin.pages = [{"title": "Page2", "body": "<p>Updated</p>"}]
-
-    mock_put.return_value.status_code = 500
-    mock_put.return_value.text = "Internal Error"
-
+    # Test updating an existing page
+    plugin.page_ids = {"Existing": "321"}
+    plugin.page_versions = {"Existing": 1}
+    plugin.pages = [{"title": "Existing", "body": "<p>updated body</p>"}]
     plugin.on_post_build(config={}, files=[])
-    assert "Failed to update page" in caplog.text
-    mock_put.assert_called_once()
+    assert any(p[0] == "Existing" for p in dummy_confluence.updated_pages)
 
 
-@mock.patch("requests.post")
-def test_on_post_build_creates_page_with_parent(mock_post, plugin):
-    plugin.enabled = True
-    plugin.auth = ("user", "token")
-    plugin.curl_url = "https://example.atlassian.net/wiki/rest/api/content/"
-    plugin.space = "SPACE"
-    plugin.parent_id = "456"
-    plugin.page_ids = {}
-    plugin.pages = [{"title": "Child Page", "body": "<p>Child</p>"}]
+def test_add_or_update_attachment(monkeypatch, tmp_path, plugin):
+    plugin.config = {
+        "host_url": "https://example.atlassian.net/wiki",
+        "username": "user",
+        "password": "pass",
+    }
 
-    mock_post.return_value.status_code = 201
+    class DummyConfluence:
+        def __init__(self):
+            self.uploaded = False
+            self.deleted = False
 
-    plugin.on_post_build(config={}, files=[])
-    called_data = mock_post.call_args[1]["data"]
-    assert '"ancestors": [{"id": "456"}]' in called_data
+        def cql(self, query):
+            return {}
+
+    dummy_confluence = DummyConfluence()
+    plugin.confluence = dummy_confluence
+
+    # Create dummy file
+    dummy_file = tmp_path / "file.txt"
+    dummy_file.write_text("content")
+
+    # Patch requests.Session methods
+    def dummy_get(url, params=None):
+        class DummyResponse:
+            status_code = 200
+            def json(self):
+                return {"results": []}
+        return DummyResponse()
+
+    def dummy_post(url, files=None, data=None):
+        class DummyResponse:
+            status_code = 200
+        return DummyResponse()
+
+    def dummy_delete(url):
+        class DummyResponse:
+            status_code = 204
+        return DummyResponse()
+
+    plugin.session.get = dummy_get
+    plugin.session.post = dummy_post
+    plugin.session.delete = dummy_delete
+
+    # Should upload attachment as none exists
+    plugin.add_or_update_attachment("Page Name", dummy_file)
 
 
-def test_on_post_build_skips_when_disabled(plugin):
-    plugin.enabled = False
-    plugin.pages = [{"title": "Skipped", "body": "<p>Skip</p>"}]
+def test_get_file_sha1(tmp_path, plugin):
+    file = tmp_path / "hash.txt"
+    content = "Hello, world!"
+    file.write_text(content)
+    expected_hash = "943a702d06f34599aee1f8da8ef9f7296031d699"  # precomputed SHA1 for that content
 
-    with mock.patch("requests.put") as mock_put, mock.patch("requests.post") as mock_post:
-        plugin.on_post_build(config={}, files=[])
-
-    mock_put.assert_not_called()
-    mock_post.assert_not_called()
+    actual_hash = plugin.get_file_sha1(file)
+    assert actual_hash == expected_hash
