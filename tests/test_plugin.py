@@ -48,29 +48,29 @@ def test_on_config_missing_keys_raises(plugin):
         plugin.on_config(config)
 
 
+
 def test_on_nav_builds_tab_nav(plugin):
-    # Create fake pages with src_path
     class DummyFile:
-        def __init__(self, src_path, src_uri=None):
-            self.src_path = src_path
-            self.src_uri = src_uri or src_path
-
-    class DummyPage:
         def __init__(self, src_path):
-            self.file = DummyFile(src_path)
+            self.src_path = src_path
 
-    files = [DummyPage("dir1/page1.md"), DummyPage("dir1/subdir/page2.md")]
     class DummyFiles:
         def documentation_pages(self):
-            return files
+            return [
+                DummyFile("dir1/page1.md"),
+                DummyFile("dir1/subdir/page2.md"),
+                DummyFile("readme.md")
+            ]
 
     dummy_files = DummyFiles()
-
     nav = Navigation(items=[], pages=[])
     plugin.on_nav(nav, config=None, files=dummy_files)
 
-    # tab_nav should contain all page names
-    assert "Page1" in plugin.tab_nav or "Page2" in plugin.tab_nav
+    # Tab nav should contain all titles, title-cased and with .md removed
+    assert "Page1" in plugin.tab_nav
+    assert "Page2" in plugin.tab_nav
+    assert "Readme" in plugin.tab_nav
+
 
 
 def test_on_page_markdown_adds_header(plugin):
