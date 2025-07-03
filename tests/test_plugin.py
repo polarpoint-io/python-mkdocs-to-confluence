@@ -7,7 +7,9 @@ from mkdocs.structure.pages import Page
 from mkdocs.structure.files import File
 from mkdocs.structure.nav import Navigation
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
+src_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src'))
+if src_path not in sys.path:
+    sys.path.insert(0, src_path)
 
 from mkdocs_confluence_plugin.plugin import ConfluencePlugin
 
@@ -48,7 +50,6 @@ def test_on_config_missing_keys_raises(plugin):
         plugin.on_config(config)
 
 
-
 def test_on_nav_builds_tab_nav(plugin):
     class DummyFile:
         def __init__(self, src_path):
@@ -66,11 +67,9 @@ def test_on_nav_builds_tab_nav(plugin):
     nav = Navigation(items=[], pages=[])
     plugin.on_nav(nav, config=None, files=dummy_files)
 
-    # Tab nav should contain all titles, title-cased and with .md removed
     assert "Page1" in plugin.tab_nav
     assert "Page2" in plugin.tab_nav
     assert "Readme" in plugin.tab_nav
-
 
 
 def test_on_page_markdown_adds_header(plugin):
@@ -95,7 +94,7 @@ def test_on_page_content_footer(plugin):
         "password": "pass"
     }
     plugin.enabled = True
-    plugin.only_in_nav = False  # <-- bypass nav check
+    plugin.only_in_nav = False  # bypass tab_nav check
 
     class DummyFile:
         def __init__(self, src_path, src_uri):
@@ -108,13 +107,11 @@ def test_on_page_content_footer(plugin):
             self.file = DummyFile("docs/test.md", "docs/test.md")
 
     page = DummyPage()
-
     html = "<p>content</p>"
     updated_html = plugin.on_page_content(html, page, None, None)
 
     assert "Edit this page on GitHub" in updated_html
     assert "This page is auto-generated" in updated_html
-
 
 
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):
@@ -144,22 +141,21 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
         def cql(self, query):
             return {}
 
-    dummy_confluence = DummyConfluence()
-    plugin.confluence = dummy_confluence
+    plugin.confluence = DummyConfluence()
 
-    # Test creating a new page
+    # Create new page
     plugin.page_ids = {}
     plugin.page_versions = {}
     plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
     plugin.on_post_build(config={}, files=[])
-    assert "New Page" in dummy_confluence.created_pages
+    assert "New Page" in plugin.confluence.created_pages
 
-    # Test updating an existing page
+    # Update existing page
     plugin.page_ids = {"Existing": "321"}
     plugin.page_versions = {"Existing": 1}
     plugin.pages = [{"title": "Existing", "body": "<p>updated body</p>"}]
     plugin.on_post_build(config={}, files=[])
-    assert any(p[0] == "Existing" for p in dummy_confluence.updated_pages)
+    assert ("Existing", 2) in plugin.confluence.updated_pages
 
 
 def test_add_or_update_attachment(monkeypatch, tmp_path, plugin):
@@ -167,6 +163,7 @@ def test_add_or_update_attachment(monkeypatch, tmp_path, plugin):
         "host_url": "https://example.atlassian.net/wiki",
         "username": "user",
         "password": "pass",
+        "space": "SPACE"  # <-- Fix: required for find_page_id
     }
 
     class DummyConfluence:
@@ -177,14 +174,11 @@ def test_add_or_update_attachment(monkeypatch, tmp_path, plugin):
         def cql(self, query):
             return {}
 
-    dummy_confluence = DummyConfluence()
-    plugin.confluence = dummy_confluence
+    plugin.confluence = DummyConfluence()
 
-    # Create dummy file
     dummy_file = tmp_path / "file.txt"
     dummy_file.write_text("content")
 
-    # Patch requests.Session methods
     def dummy_get(url, params=None):
         class DummyResponse:
             status_code = 200
@@ -206,7 +200,6 @@ def test_add_or_update_attachment(monkeypatch, tmp_path, plugin):
     plugin.session.post = dummy_post
     plugin.session.delete = dummy_delete
 
-    # Should upload attachment as none exists
     plugin.add_or_update_attachment("Page Name", dummy_file)
 
 
@@ -214,7 +207,7 @@ def test_get_file_sha1(tmp_path, plugin):
     file = tmp_path / "hash.txt"
     content = "Hello, world!"
     file.write_text(content)
-    expected_hash = "943a702d06f34599aee1f8da8ef9f7296031d699"  # precomputed SHA1 for that content
+    expected_hash = "943a702d06f34599aee1f8da8ef9f7296031d699"  # known SHA1
 
     actual_hash = plugin.get_file_sha1(file)
     assert actual_hash == expected_hash
