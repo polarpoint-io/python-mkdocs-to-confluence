@@ -95,8 +95,7 @@ def test_on_page_content_footer(plugin):
         "password": "pass"
     }
     plugin.enabled = True
-    # Setup tab_nav to include the page title
-    plugin.tab_nav = ["Test Page"]
+    plugin.only_in_nav = False  # <-- bypass nav check
 
     class DummyFile:
         def __init__(self, src_path, src_uri):
@@ -112,7 +111,10 @@ def test_on_page_content_footer(plugin):
 
     html = "<p>content</p>"
     updated_html = plugin.on_page_content(html, page, None, None)
+
     assert "Edit this page on GitHub" in updated_html
+    assert "This page is auto-generated" in updated_html
+
 
 
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):
