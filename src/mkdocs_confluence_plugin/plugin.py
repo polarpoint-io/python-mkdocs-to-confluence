@@ -204,10 +204,10 @@ class ConfluencePlugin(BasePlugin):
         if not self.enabled:
             return html
 
-        nav = [tab.strip() for tab in ConfluencePlugin.tab_nav]
-        if self.only_in_nav and not (page.title in nav or page.file.src_uri in nav):
-            log.debug(f"Page '{page.file.src_uri}' is not in nav! Skipping it.")
-            return html
+        # nav = [tab.strip() for tab in ConfluencePlugin.tab_nav]
+        # if self.only_in_nav and not (page.title in nav or page.file.src_uri in nav):
+        #     log.debug(f"Page '{page.file.src_uri}' is not in nav! Skipping it.")
+        #     return html
 
         if self.config.get("enable_footer", False):
             relative_path = page.file.src_path
