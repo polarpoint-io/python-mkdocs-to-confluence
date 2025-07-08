@@ -89,64 +89,64 @@ class ConfluencePlugin(BasePlugin):
         self.only_in_nav = True
         self.dryrun = False
 
+
     def on_config(self, config):
-        self.config = config.get("confluence", {})
 
-        if not self.config.get("enabled", True):
+        plugin_cfg = self.config  # plugin config dict
+
+        # If explicitly disabled, turn off plugin
+        if not plugin_cfg.get("enabled", True):
             self.enabled = False
-            return
+            return config
 
-        if not self.config.get("username"):
-            self.config["username"] = os.environ.get("CONFLUENCE_USERNAME")
-        if not self.config.get("password"):
-            self.config["password"] = os.environ.get("CONFLUENCE_PASSWORD")
+        # Environment variable fallback for username and password
+        if not plugin_cfg.get("username"):
+            plugin_cfg["username"] = os.environ.get("CONFLUENCE_USERNAME")
+        if not plugin_cfg.get("password"):
+            plugin_cfg["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
+        # Validate required keys after fallback
         required_keys = ["host_url", "username", "password", "space"]
-        missing_keys = [key for key in required_keys if not self.config.get(key)]
+        missing_keys = [k for k in required_keys if not plugin_cfg.get(k)]
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
 
+        # Initialize Confluence client
         self.confluence = Confluence(
-            url=self.config["host_url"].replace("/rest/api/content", ""),
-            username=self.config["username"],
-            password=self.config["password"],
+            url=plugin_cfg["host_url"].replace("/rest/api/content", ""),
+            username=plugin_cfg["username"],
+            password=plugin_cfg["password"],
         )
 
-        self.default_labels = self.config.get("default_labels", ["cpe", "mkdocs"])
+        # Set other attributes
+        self.default_labels = plugin_cfg.get("default_labels", ["cpe", "mkdocs"])
 
-        if self.config.get("debug", False):
+        if plugin_cfg.get("debug", False):
             log.setLevel(logging.DEBUG)
 
-        if "enabled_if_env" in self.config:
-            env_name = self.config["enabled_if_env"]
-            if env_name:
-                self.enabled = os.environ.get(env_name) == "1"
-                if not self.enabled:
-                    log.warning(
-                        f"Exporting MKDOCS pages to Confluence turned OFF: "
-                        f"(set environment variable {env_name} to 1 to enable)"
-                    )
-                    return
-                else:
-                    log.info(
-                        f"Exporting MKDOCS pages to Confluence turned ON by var {env_name}==1!"
-                    )
-                    self.enabled = True
-            else:
+        # Enable toggle by env var if specified
+        enabled_if_env = plugin_cfg.get("enabled_if_env")
+        if enabled_if_env:
+            self.enabled = os.environ.get(enabled_if_env) == "1"
+            if not self.enabled:
                 log.warning(
                     f"Exporting MKDOCS pages to Confluence turned OFF: "
-                    f"(set environment variable {env_name} to 1 to enable)"
+                    f"(set environment variable {enabled_if_env} to 1 to enable)"
                 )
-                return
+                return config
+            else:
+                log.info(f"Exporting MKDOCS pages to Confluence turned ON by var {enabled_if_env}==1!")
         else:
             log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
             self.enabled = True
 
-        if self.config.get("dryrun", False):
+
+        self.dryrun = plugin_cfg.get("dryrun", False)
+        if self.dryrun:
             log.warning("- DRYRUN MODE turned ON")
-            self.dryrun = True
-        else:
-            self.dryrun = False
+
+        return config
+
 
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
