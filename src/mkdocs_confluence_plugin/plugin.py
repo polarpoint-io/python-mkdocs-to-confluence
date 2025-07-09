@@ -234,8 +234,31 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
         self.ensure_folder_pages_exist(self.tab_nav, parent_id=self.parent_page_id)
 
-        log.info("📤 Publishing structured navigation to Confluence")
-        self.publish_nav_structure(self.tab_nav, parent_id=self.parent_page_id)
+        log.info(f"📤 Publishing structured navigation to Confluence")
+
+        existing_titles = {page["title"] for page in self.pages}
+
+        for title in self.tab_nav:
+            if title not in existing_titles:
+                log.warning(f"❌ Page titled '{title}' not found in self.pages under parent ID {self.parent_page_id}")
+                if not self.dryrun:
+                    log.info(f"📄 Creating Confluence placeholder page for missing nav entry '{title}'")
+                    result = self.confluence.create_page(
+                        space=self.config["space"],
+                        title=title,
+                        body=TEMPLATE_BODY,
+                        parent_id=self.parent_page_id,
+                        representation="storage"
+                    )
+                    if result and "id" in result:
+                        page_id = result["id"]
+                        self.page_ids[(title, self.parent_page_id)] = page_id
+                        self.page_versions[(title, self.parent_page_id)] = 1
+                        log.info(f"✅ Created placeholder page '{title}' with ID {page_id}")
+                    else:
+                        log.error(f"❌ Failed to create placeholder page: '{title}'")
+                else:
+                    log.info(f"DRYRUN: Would create placeholder page '{title}'")
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
 
