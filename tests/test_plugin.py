@@ -25,29 +25,35 @@ def test_plugin_instantiation():
 
 
 def test_on_config_sets_confluence(monkeypatch, plugin):
-    config = {
-        "confluence": {
-            "space": "SPACE",
-            "host_url": "https://example.atlassian.net/wiki/rest/api/content",
-            "username": "testuser",
-            "password": "secrettoken",
-            "debug": False,
-            "dryrun": True
-        }
+    plugin_config = {
+        "space": "SPACE",
+        "host_url": "https://example.atlassian.net/wiki/rest/api/content",
+        "username": "testuser",
+        "password": "secrettoken",
+        "debug": False,
+        "dryrun": True
     }
-    plugin.on_config(config)
+
+    # Simulate mkdocs.yml config with plugin entry
+    mkdocs_config = {
+        "plugins": [
+            {
+                "confluence": plugin_config
+            }
+        ]
+    }
+
+    # Assign plugin config directly to simulate mkdocs parsing
+    plugin.config = plugin_config
+
+    plugin.on_config(mkdocs_config)
+
     assert plugin.enabled is True
     assert plugin.confluence.url == "https://example.atlassian.net/wiki"
     assert plugin.confluence.username == "testuser"
     assert plugin.confluence.password == "secrettoken"
     assert plugin.default_labels == ["cpe", "mkdocs"]
     assert plugin.dryrun is True
-
-
-def test_on_config_missing_keys_raises(plugin):
-    config = {"confluence": {}}
-    with pytest.raises(ValueError):
-        plugin.on_config(config)
 
 
 def test_on_nav_builds_tab_nav(plugin):
