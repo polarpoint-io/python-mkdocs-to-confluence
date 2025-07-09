@@ -246,45 +246,18 @@ class ConfluencePlugin(BasePlugin):
 
 
 
-
     def on_post_build(self, config, **kwargs):
         if not self.enabled:
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
-        self.ensure_folder_pages_exist(self.tab_nav, parent_id=self.parent_page_id)
 
-        log.info(f"📤 Publishing structured navigation to Confluence")
-
-        existing_titles = {page["title"] for page in self.pages}
-
-        for title in self.tab_nav:
-            if title not in existing_titles:
-                log.warning(f"❌ Page titled '{title}' not found in self.pages under parent ID {self.parent_page_id}")
-                if not self.dryrun:
-                    log.info(f"📄 Creating Confluence placeholder page for missing nav entry '{title}'")
-                    result = self.confluence.create_page(
-                        space=self.config["space"],
-                        title=title,
-                        body=TEMPLATE_BODY,
-                        parent_id=self.parent_page_id,
-                        representation="storage"
-                    )
-                    if result and "id" in result:
-                        page_id = result["id"]
-                        self.page_ids[(title, self.parent_page_id)] = page_id
-                        self.page_versions[(title, self.parent_page_id)] = 1
-                        log.info(f"✅ Created placeholder page '{title}' with ID {page_id}")
-                    else:
-                        log.error(f"❌ Failed to create placeholder page: '{title}'")
-                else:
-                    log.info(f"DRYRUN: Would create placeholder page '{title}'")
-
+        # Recursively create folders and pages, publishing each respecting hierarchy
+        self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
 
-        self.publish_nav_structure(self.tab_nav, parent_id=self.parent_page_id)
 
 
     def _normalize_title(self, title: str) -> str:
@@ -637,6 +610,86 @@ class ConfluencePlugin(BasePlugin):
             log.error(
                 f"Failed to delete attachment ID {attachment_id} (status {response.status_code})."
             )
+
+    def build_and_publish_tree(self, nav_tree, parent_id=None):
+        """
+        Recursively create folder pages and publish all pages respecting
+        the navigation hierarchy in Confluence.
+        """
+        for node in nav_tree:
+            if isinstance(node, dict):
+                # Folder node with children
+                for folder_title, children in node.items():
+                    norm_title = folder_title.strip()
+
+                    # Find existing folder page id or create it
+                    folder_page_id = self.find_page_id(norm_title, parent_id=parent_id)
+                    if not folder_page_id:
+                        if self.dryrun:
+                            log.info(f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}")
+                            folder_page_id = None
+                        else:
+                            log.info(f"Creating folder page '{norm_title}' under parent ID {parent_id}")
+                            result = self.confluence.create_page(
+                                space=self.config["space"],
+                                title=norm_title,
+                                body=TEMPLATE_BODY,
+                                parent_id=parent_id,
+                                representation="storage",
+                            )
+                            if result and "id" in result:
+                                folder_page_id = result["id"]
+                                self.page_ids[(norm_title, parent_id)] = folder_page_id
+                                self.page_versions[(norm_title, parent_id)] = 1
+                                log.info(f"Created folder page '{norm_title}' with ID {folder_page_id}")
+                            else:
+                                log.error(f"Failed to create folder page '{norm_title}'")
+                                folder_page_id = None
+
+                    # Add folder page to self.pages if missing
+                    if folder_page_id and not any(
+                        p["title"] == norm_title and p.get("parent_id") == parent_id for p in self.pages
+                    ):
+                        self.pages.append({
+                            "title": norm_title,
+                            "body": TEMPLATE_BODY,
+                            "parent_id": parent_id,
+                            "is_folder": True,
+                        })
+
+                    # Recurse on children with folder_page_id as parent
+                    self.build_and_publish_tree(children, parent_id=folder_page_id)
+
+            else:
+                # Leaf page (string)
+                page_title = node.strip()
+
+                existing_page = next(
+                    (p for p in self.pages if p["title"] == page_title and p.get("parent_id") == parent_id),
+                    None,
+                )
+
+                if existing_page:
+                    log.info(f"Publishing page '{page_title}' under parent ID {parent_id}")
+                    self.publish_page(page_title, existing_page["body"], parent_id)
+                    self.sync_page_attachments(page_title, parent_id)
+                else:
+                    log.warning(f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder")
+                    if not self.dryrun:
+                        created_id = self.find_or_create_page(page_title, parent_id=parent_id)
+                        if created_id:
+                            self.pages.append({
+                                "title": page_title,
+                                "body": TEMPLATE_BODY,
+                                "parent_id": parent_id,
+                                "is_folder": False,
+                            })
+                            self.publish_page(page_title, TEMPLATE_BODY, parent_id)
+                            self.sync_page_attachments(page_title, parent_id)
+                    else:
+                        log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
+
+
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()
