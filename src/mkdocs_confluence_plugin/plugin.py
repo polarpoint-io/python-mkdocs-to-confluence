@@ -211,23 +211,25 @@ class ConfluencePlugin(BasePlugin):
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
 
-
-
-
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
-
 
     def ensure_folder_pages_exist(self, nav_tree, parent_id=None):
         for node in nav_tree:
             if isinstance(node, dict):
                 for folder_title, children in node.items():
-                    log.debug(f"Checking folder page '{folder_title}' under parent ID {parent_id}")
+                    log.debug(
+                        f"Checking folder page '{folder_title}' under parent ID {parent_id}"
+                    )
                     folder_id = self.find_page_id(folder_title, parent_id=parent_id)
                     if not folder_id:
-                        log.info(f"Folder page '{folder_title}' not found, creating placeholder")
+                        log.info(
+                            f"Folder page '{folder_title}' not found, creating placeholder"
+                        )
                         if self.dryrun:
-                            log.info(f"DRYRUN: Would create folder page '{folder_title}'")
+                            log.info(
+                                f"DRYRUN: Would create folder page '{folder_title}'"
+                            )
                             folder_id = None
                         else:
                             result = self.confluence.create_page(
@@ -241,23 +243,33 @@ class ConfluencePlugin(BasePlugin):
                                 folder_id = result["id"]
                                 self.page_ids[(folder_title, parent_id)] = folder_id
                                 self.page_versions[(folder_title, parent_id)] = 1
-                                log.info(f"Created folder page '{folder_title}' with ID {folder_id}")
+                                log.info(
+                                    f"Created folder page '{folder_title}' with ID {folder_id}"
+                                )
                             else:
-                                log.error(f"Failed to create folder page '{folder_title}'")
+                                log.error(
+                                    f"Failed to create folder page '{folder_title}'"
+                                )
                                 folder_id = None
                     else:
-                        log.debug(f"Folder page '{folder_title}' already exists with ID {folder_id}")
+                        log.debug(
+                            f"Folder page '{folder_title}' already exists with ID {folder_id}"
+                        )
 
-                    if folder_id and not any(p["title"] == folder_title and p.get("parent_id") == parent_id for p in self.pages):
-                        self.pages.append({
-                            "title": folder_title,
-                            "body": TEMPLATE_BODY,
-                            "parent_id": parent_id,
-                            "is_folder": True,
-                        })
+                    if folder_id and not any(
+                        p["title"] == folder_title and p.get("parent_id") == parent_id
+                        for p in self.pages
+                    ):
+                        self.pages.append(
+                            {
+                                "title": folder_title,
+                                "body": TEMPLATE_BODY,
+                                "parent_id": parent_id,
+                                "is_folder": True,
+                            }
+                        )
 
                     self.ensure_folder_pages_exist(children, parent_id=folder_id)
-
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
@@ -266,32 +278,42 @@ class ConfluencePlugin(BasePlugin):
                     page_id = self.find_page_id(title, parent_id=parent_id)
                     if not page_id:
                         page_id = self.find_or_create_page(title, parent_id=parent_id)
-                        log.info(f"Folder page '{title}' created or found with ID {page_id}")
+                        log.info(
+                            f"Folder page '{title}' created or found with ID {page_id}"
+                        )
 
                     self.page_ids[(title, parent_id)] = page_id
 
-                    if not any(p["title"] == title and p.get("parent_id") == parent_id for p in self.pages):
-                        self.pages.append({
-                            "title": title,
-                            "body": TEMPLATE_BODY,
-                            "parent_id": parent_id,
-                            "is_folder": True,
-                        })
+                    if not any(
+                        p["title"] == title and p.get("parent_id") == parent_id
+                        for p in self.pages
+                    ):
+                        self.pages.append(
+                            {
+                                "title": title,
+                                "body": TEMPLATE_BODY,
+                                "parent_id": parent_id,
+                                "is_folder": True,
+                            }
+                        )
 
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
                 normalized_node = self._normalize_title(node)
                 page = next(
-                    (p for p in self.pages if self._normalize_title(p["title"]) == normalized_node and p.get("parent_id") == parent_id),
-                    None
-                )
+                                (p for p in self.pages if self._normalize_title(p["title"]) == normalized_node),
+                                None
+                            )
                 if page:
-                    log.debug(f"Publishing page '{page['title']}' under parent ID {parent_id}")
+                    log.debug(
+                        f"Publishing page '{page['title']}' under parent ID {parent_id}"
+                    )
                     self.publish_page(page["title"], page["body"], parent_id)
                     self.sync_page_attachments(page["title"], parent_id)
                 else:
-                    log.warning(f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}")
-
+                    log.warning(
+                        f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}"
+                    )
 
     def publish_page(self, title, body, parent_id):
         page_id = self.find_page_id(title, parent_id=parent_id)
@@ -304,7 +326,9 @@ class ConfluencePlugin(BasePlugin):
             response = self.confluence.update_page(page_id, title, body)
             if response:
                 log.info(f"Successfully updated page '{title}'")
-                self.page_versions[(title, parent_id)] = self.page_versions.get((title, parent_id), 1) + 1
+                self.page_versions[(title, parent_id)] = (
+                    self.page_versions.get((title, parent_id), 1) + 1
+                )
             else:
                 log.error(f"Failed to update page '{title}'")
         else:
@@ -358,9 +382,10 @@ class ConfluencePlugin(BasePlugin):
         log.error(f"Failed to create or find page '{title}'")
         return None
 
-
     def create_or_update_page(self, title, body, parent_id):
-        log.debug(f"Attempting to find page ID for title='{title}', parent_id='{parent_id}'")
+        log.debug(
+            f"Attempting to find page ID for title='{title}', parent_id='{parent_id}'"
+        )
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
             log.info(f"Creating new Confluence page '{title}'")
@@ -377,7 +402,10 @@ class ConfluencePlugin(BasePlugin):
                     representation="storage",
                 )
             except Exception as e:
-                log.error(f"Exception occurred while creating page '{title}': {e}", exc_info=True)
+                log.error(
+                    f"Exception occurred while creating page '{title}': {e}",
+                    exc_info=True,
+                )
                 return
 
             if response:
@@ -401,30 +429,29 @@ class ConfluencePlugin(BasePlugin):
                 "version": {"number": version},
                 "title": title,
                 "type": "page",
-                "body": {
-                    "storage": {
-                        "value": body,
-                        "representation": "storage"
-                    }
-                }
+                "body": {"storage": {"value": body, "representation": "storage"}},
             }
             url = f"{self.config['host_url']}/rest/api/content/{page_id}"
             try:
                 response = self.session.put(
                     url,
                     json=data,
-                    auth=(self.config["username"], self.config["password"])
+                    auth=(self.config["username"], self.config["password"]),
                 )
             except Exception as e:
-                log.error(f"Exception occurred while updating page '{title}': {e}", exc_info=True)
+                log.error(
+                    f"Exception occurred while updating page '{title}': {e}",
+                    exc_info=True,
+                )
                 return
 
             if response.ok:
                 log.info(f"Successfully updated page '{title}' to version {version}")
                 self.page_versions[(title, parent_id)] = version
             else:
-                log.error(f"Failed to update page '{title}': {response.status_code} {response.text}")
-
+                log.error(
+                    f"Failed to update page '{title}': {response.status_code} {response.text}"
+                )
 
     def find_page_id(self, title, parent_id=None):
         cql = f'title = "{title}" and space = "{self.config["space"]}"'
@@ -433,7 +460,11 @@ class ConfluencePlugin(BasePlugin):
             page = None
             if parent_id:
                 for r in results["results"]:
-                    ancestors = r.get("ancestors") or r.get("content", {}).get("ancestors") or []
+                    ancestors = (
+                        r.get("ancestors")
+                        or r.get("content", {}).get("ancestors")
+                        or []
+                    )
                     if ancestors and str(ancestors[-1].get("id")) == str(parent_id):
                         page = r
                         break
@@ -447,29 +478,35 @@ class ConfluencePlugin(BasePlugin):
                 self.page_ids[(title, parent_id)] = page_id
                 self.page_versions[(title, parent_id)] = version
                 return page_id
-        log.debug(f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}")
+        log.debug(
+            f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}"
+        )
         return None
-
 
     def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
         page_id = self.page_ids.get((page_title, parent_id))
         if not page_id:
-            log.warning(f"Attachment sync skipped: Page ID for '{page_title}' with parent '{parent_id}' not found")
+            log.warning(
+                f"Attachment sync skipped: Page ID for '{page_title}' with parent '{parent_id}' not found"
+            )
             return
         for root, _, files in os.walk("docs"):
             for file in files:
-                if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")):
+                if file.lower().endswith(
+                    (".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")
+                ):
                     filepath = Path(root) / file
                     if normalized_title in filepath.stem.lower().replace(" ", "_"):
                         self.add_or_update_attachment(page_id, page_title, filepath)
-
 
     def add_or_update_attachment(self, page_name, filepath):
         log.info(f"Handling attachment for page '{page_name}': file '{filepath.name}'")
         page_id = self.find_page_id(page_name)
         if not page_id:
-            log.error(f"Cannot find Confluence page id for '{page_name}'. Attachment skipped.")
+            log.error(
+                f"Cannot find Confluence page id for '{page_name}'. Attachment skipped."
+            )
             return
 
         file_hash = self.get_file_sha1(filepath)
@@ -478,9 +515,13 @@ class ConfluencePlugin(BasePlugin):
         existing_attachment = self.get_attachment(page_id, filepath)
         if existing_attachment:
             file_hash_regex = re.compile(r"\[v([a-f0-9]+)\]")
-            current_hash_match = file_hash_regex.search(existing_attachment.get("metadata", ""))
+            current_hash_match = file_hash_regex.search(
+                existing_attachment.get("metadata", "")
+            )
             if current_hash_match and current_hash_match.group(1) == file_hash:
-                log.info(f"Attachment '{filepath.name}' is up-to-date. Skipping upload.")
+                log.info(
+                    f"Attachment '{filepath.name}' is up-to-date. Skipping upload."
+                )
                 return
             else:
                 self.delete_attachment(existing_attachment["id"])
@@ -507,7 +548,9 @@ class ConfluencePlugin(BasePlugin):
         if response.status_code in (200, 201):
             log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
         else:
-            log.error(f"Failed to upload attachment '{filepath.name}' (status {response.status_code}).")
+            log.error(
+                f"Failed to upload attachment '{filepath.name}' (status {response.status_code})."
+            )
 
     def delete_attachment(self, attachment_id):
         url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
@@ -515,7 +558,9 @@ class ConfluencePlugin(BasePlugin):
         if response.status_code == 204:
             log.info(f"Deleted attachment ID {attachment_id}.")
         else:
-            log.error(f"Failed to delete attachment ID {attachment_id} (status {response.status_code}).")
+            log.error(
+                f"Failed to delete attachment ID {attachment_id} (status {response.status_code})."
+            )
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()
