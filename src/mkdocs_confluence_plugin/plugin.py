@@ -203,17 +203,30 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
-            log.info(f"Nav structure for folder pages creation: {self.tab_nav}")
+        log.info("Starting Confluence post-build publishing process")
+        log.debug(f"Nav structure for folder pages creation: {self.tab_nav}")
+
+        try:
             self.ensure_folder_pages_exist(self.tab_nav, parent_id=None)
+            log.info("Folder pages ensured.")
+
             self.publish_nav_structure(self.tab_nav, parent_id=None)
+            log.info("Navigation structure published.")
 
-            log.info(f"🚧 Total pages queued: {len(self.pages)}")
-
+            log.info(f"🚧 Total pages queued for create/update: {len(self.pages)}")
             for page in self.pages:
+                log.debug(f"Creating/updating page: {page['title']}")
                 self.create_or_update_page(page["title"], page["body"], parent_id=None)
 
+            log.info("All pages created/updated. Starting attachment sync.")
             for page in self.pages:
+                log.debug(f"Syncing attachments for page: {page['title']}")
                 self.sync_page_attachments(page["title"])
+
+            log.info("Confluence post-build publishing process completed successfully.")
+        except Exception as e:
+            log.error(f"Error during Confluence post-build publishing: {e}", exc_info=True)
+
 
 
     def _normalize_title(self, title: str) -> str:
@@ -338,7 +351,9 @@ class ConfluencePlugin(BasePlugin):
         log.error(f"Failed to create or find page '{title}'")
         return None
 
+
     def create_or_update_page(self, title, body, parent_id):
+        log.debug(f"Attempting to find page ID for title='{title}', parent_id='{parent_id}'")
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
             log.info(f"Creating new Confluence page '{title}'")
@@ -346,24 +361,31 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"DRYRUN: Would create page '{title}'")
                 return
 
-            response = self.confluence.create_page(
-                space=self.config["space"],
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                representation="storage",
-            )
+            try:
+                response = self.confluence.create_page(
+                    space=self.config["space"],
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
+            except Exception as e:
+                log.error(f"Exception occurred while creating page '{title}': {e}", exc_info=True)
+                return
+
             if response:
                 page_id = response.get("id")
-                log.info(f"Successfully created page '{title}' with ID {page_id}")
                 if page_id:
+                    log.info(f"Successfully created page '{title}' with ID {page_id}")
                     self.page_ids[(title, parent_id)] = page_id
                     self.page_versions[(title, parent_id)] = 1
+                else:
+                    log.error(f"Page creation response missing 'id' for page '{title}'")
             else:
-                log.error(f"Failed to create page '{title}'")
+                log.error(f"Failed to create page '{title}': No response received")
         else:
             version = self.page_versions.get((title, parent_id), 1) + 1
-            log.info(f"Updating Confluence page '{title}' (version {version})")
+            log.info(f"Updating Confluence page '{title}' (new version {version})")
             if self.dryrun:
                 log.info(f"DRYRUN: Would update page '{title}' to version {version}")
                 return
@@ -380,7 +402,16 @@ class ConfluencePlugin(BasePlugin):
                 }
             }
             url = f"{self.config['host_url']}/rest/api/content/{page_id}"
-            response = self.session.put(url, json=data, auth=(self.config["username"], self.config["password"]))
+            try:
+                response = self.session.put(
+                    url,
+                    json=data,
+                    auth=(self.config["username"], self.config["password"])
+                )
+            except Exception as e:
+                log.error(f"Exception occurred while updating page '{title}': {e}", exc_info=True)
+                return
+
             if response.ok:
                 log.info(f"Successfully updated page '{title}' to version {version}")
                 self.page_versions[(title, parent_id)] = version
