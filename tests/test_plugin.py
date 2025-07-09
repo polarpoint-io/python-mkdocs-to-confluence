@@ -250,6 +250,8 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
         "password": "pass",
     }
 
+    plugin.parent_page_id = None  # Add this line
+
     class DummyConfluence:
         def __init__(self):
             self.created_pages = []
@@ -277,6 +279,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.sync_page_attachments = Mock()
 
     plugin.on_post_build(config={}, files=[])
+
 
 
 def test_find_page_id_with_and_without_parent_id(plugin):

@@ -83,13 +83,11 @@ class ConfluencePlugin(BasePlugin):
             self.enabled = False
             return config
 
-        # Set username/password from env if missing
         if not plugin_cfg.get("username"):
             plugin_cfg["username"] = os.environ.get("CONFLUENCE_USERNAME")
         if not plugin_cfg.get("password"):
             plugin_cfg["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
-        # Check required config keys
         required_keys = ["host_url", "username", "password", "space"]
         missing_keys = [k for k in required_keys if not plugin_cfg.get(k)]
         if missing_keys:
@@ -111,21 +109,50 @@ class ConfluencePlugin(BasePlugin):
         if enabled_if_env:
             self.enabled = os.environ.get(enabled_if_env) == "1"
             if not self.enabled:
-                log.warning(
-                    f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable."
-                )
+                log.warning(f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable.")
                 return config
             else:
-                log.info(
-                    f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1)."
-                )
+                log.info(f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1).")
         else:
             log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
 
         if self.dryrun:
             log.warning("DRYRUN MODE ENABLED: No changes will be made to Confluence.")
 
+        if plugin_cfg.get("parent_page_name"):
+            parent_parts = plugin_cfg["parent_page_name"].split("/")
+            current_parent_id = None
+
+            for part in parent_parts:
+                page_id = self.find_page_id(part, parent_id=current_parent_id)
+                if not page_id:
+                    if self.dryrun:
+                        log.warning(f"DRYRUN: Would create missing intermediate page: {part}")
+                        page_id = f"DUMMY_ID_{part}"
+                    else:
+                        log.warning(f"Intermediate parent page '{part}' not found. Creating it...")
+                        result = self.confluence.create_page(
+                            space=plugin_cfg["space"],
+                            title=part,
+                            body=TEMPLATE_BODY,
+                            parent_id=current_parent_id,
+                            representation="storage"
+                        )
+                        if result and "id" in result:
+                            page_id = result["id"]
+                            self.page_ids[(part, current_parent_id)] = page_id
+                            self.page_versions[(part, current_parent_id)] = 1
+                            log.info(f"Created intermediate parent page '{part}' with ID {page_id}")
+                        else:
+                            raise ValueError(f"Failed to create intermediate parent page: {part}")
+
+                current_parent_id = page_id
+
+            self.parent_page_id = current_parent_id
+            log.info(f"Using final root parent page ID {self.parent_page_id} for path '{plugin_cfg['parent_page_name']}'")
+
         return config
+
 
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
@@ -198,18 +225,20 @@ class ConfluencePlugin(BasePlugin):
 
         return html
 
+
     def on_post_build(self, config, **kwargs):
         if not self.enabled:
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
-        self.ensure_folder_pages_exist(self.tab_nav, parent_id=None)
+        self.ensure_folder_pages_exist(self.tab_nav, parent_id=self.parent_page_id)
 
-        log.info(f"📤 Publishing structured navigation to Confluence")
-        self.publish_nav_structure(self.tab_nav, parent_id=None)
+        log.info("📤 Publishing structured navigation to Confluence")
+        self.publish_nav_structure(self.tab_nav, parent_id=self.parent_page_id)
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
+
 
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
