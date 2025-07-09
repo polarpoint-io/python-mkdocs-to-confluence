@@ -203,28 +203,18 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
-        log.info("📤 Publishing pages to Confluence hierarchy...")
+            log.info(f"Nav structure for folder pages creation: {self.tab_nav}")
+            self.ensure_folder_pages_exist(self.tab_nav, parent_id=None)
+            self.publish_nav_structure(self.tab_nav, parent_id=None)
 
-        parent_id = None
-        if self.config.get("parent_page_name"):
-            parent_id = self.find_page_id(self.config["parent_page_name"])
+            log.info(f"🚧 Total pages queued: {len(self.pages)}")
 
-        # Ensure all folder pages exist before publishing the nav structure
-        self.ensure_folder_pages_exist(self.tab_nav, parent_id=parent_id)
+            for page in self.pages:
+                self.create_or_update_page(page["title"], page["body"], parent_id=None)
 
-        # Now publish pages according to nav structure
-        self.publish_nav_structure(self.tab_nav, parent_id=parent_id)
+            for page in self.pages:
+                self.sync_page_attachments(page["title"])
 
-        log.info(f"🚧 Total pages queued: {len(self.pages)}")
-
-        for page in self.pages:
-            title = page["title"]
-            body = page["body"]
-            self.create_or_update_page(title, body, parent_id)
-
-        # Sync attachments after page creation
-        for page in self.pages:
-            self.sync_page_attachments(page["title"])
 
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
@@ -233,9 +223,10 @@ class ConfluencePlugin(BasePlugin):
         for node in nav_tree:
             if isinstance(node, dict):
                 for folder_title, children in node.items():
-                    folder_id = self.find_page_id(folder_title)
+                    log.debug(f"Checking folder page '{folder_title}' under parent ID {parent_id}")
+                    folder_id = self.find_page_id(folder_title, parent_id=parent_id)
                     if not folder_id:
-                        log.info(f"Creating placeholder folder page '{folder_title}' under parent ID {parent_id}")
+                        log.info(f"Folder page '{folder_title}' not found, creating placeholder")
                         if self.dryrun:
                             log.info(f"DRYRUN: Would create folder page '{folder_title}'")
                             folder_id = None
@@ -247,21 +238,18 @@ class ConfluencePlugin(BasePlugin):
                                 parent_id=parent_id,
                                 representation="storage",
                             )
-                            folder_id = result.get("id") if result else None
-                            if folder_id:
-                                self.page_ids[folder_title] = folder_id
-                                self.page_versions[folder_title] = 1
+                            if result and "id" in result:
+                                folder_id = result["id"]
+                                self.page_ids[(folder_title, parent_id)] = folder_id
+                                self.page_versions[(folder_title, parent_id)] = 1
+                                log.info(f"Created folder page '{folder_title}' with ID {folder_id}")
                             else:
                                 log.error(f"Failed to create folder page '{folder_title}'")
                     else:
                         log.debug(f"Folder page '{folder_title}' already exists with ID {folder_id}")
 
-                    if folder_id:
-                        self.ensure_folder_pages_exist(children, parent_id=folder_id)
-                    else:
-                        log.warning(f"Skipping children of '{folder_title}' due to missing folder page ID")
+                    self.ensure_folder_pages_exist(children, parent_id=folder_id)
             else:
-                # leaf page (string), no folder creation needed
                 pass
 
 
@@ -269,12 +257,10 @@ class ConfluencePlugin(BasePlugin):
         for node in nav_tree:
             if isinstance(node, dict):
                 for title, children in node.items():
-                    page_id = self.find_page_id(title)
+                    page_id = self.find_page_id(title, parent_id=parent_id)
                     if not page_id:
-                        # If page does not exist (should not happen due to ensure_folder_pages_exist),
-                        # create it as a fallback with template body
-                        page_id = self.find_or_create_page(title, parent_id)
-                    self.page_ids[title] = page_id
+                        page_id = self.find_or_create_page(title, parent_id=parent_id)
+                    self.page_ids[(title, parent_id)] = page_id
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
                 normalized_node = self._normalize_title(node)
@@ -353,9 +339,8 @@ class ConfluencePlugin(BasePlugin):
         return None
 
     def create_or_update_page(self, title, body, parent_id):
-        page_id = self.find_page_id(title)
+        page_id = self.find_page_id(title, parent_id)
         if not page_id:
-            # Page doesn't exist, create it
             log.info(f"Creating new Confluence page '{title}'")
             if self.dryrun:
                 log.info(f"DRYRUN: Would create page '{title}'")
@@ -369,16 +354,15 @@ class ConfluencePlugin(BasePlugin):
                 representation="storage",
             )
             if response:
-                log.info(f"Successfully created page '{title}'")
                 page_id = response.get("id")
+                log.info(f"Successfully created page '{title}' with ID {page_id}")
                 if page_id:
-                    self.page_ids[title] = page_id
-                    self.page_versions[title] = 1
+                    self.page_ids[(title, parent_id)] = page_id
+                    self.page_versions[(title, parent_id)] = 1
             else:
                 log.error(f"Failed to create page '{title}'")
         else:
-            # Page exists, update it with version in payload (not as kwarg)
-            version = self.page_versions.get(title, 1) + 1
+            version = self.page_versions.get((title, parent_id), 1) + 1
             log.info(f"Updating Confluence page '{title}' (version {version})")
             if self.dryrun:
                 log.info(f"DRYRUN: Would update page '{title}' to version {version}")
@@ -399,27 +383,35 @@ class ConfluencePlugin(BasePlugin):
             response = self.session.put(url, json=data, auth=(self.config["username"], self.config["password"]))
             if response.ok:
                 log.info(f"Successfully updated page '{title}' to version {version}")
-                self.page_versions[title] = version
+                self.page_versions[(title, parent_id)] = version
             else:
                 log.error(f"Failed to update page '{title}': {response.status_code} {response.text}")
 
 
-    def find_page_id(self, title):
-        if title in self.page_ids:
-            return self.page_ids[title]
-
+    def find_page_id(self, title, parent_id=None):
         cql = f'title = "{title}" and space = "{self.config["space"]}"'
         results = self.confluence.cql(cql)
         if results.get("results"):
-            page = results["results"][0]
-            page_id = page.get("id") or page.get("content", {}).get("id")
-            if not page_id:
-                log.error(f"Cannot find 'id' in page result for title '{title}'")
-                return None
-            self.page_ids[title] = page_id
-            self.page_versions[title] = page.get("version", {}).get("number", 1)
-            return page_id
+            page = None
+            if parent_id:
+                for r in results["results"]:
+                    ancestors = r.get("ancestors") or r.get("content", {}).get("ancestors") or []
+                    if any(a.get("id") == str(parent_id) for a in ancestors):
+                        page = r
+                        break
+            else:
+                page = results["results"][0]
+
+            if page:
+                page_id = page.get("id") or page.get("content", {}).get("id")
+                version = page.get("version", {}).get("number", 1)
+                log.debug(f"Found page '{title}' with ID {page_id} (version {version})")
+                self.page_ids[(title, parent_id)] = page_id
+                self.page_versions[(title, parent_id)] = version
+                return page_id
+        log.debug(f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}")
         return None
+
 
     def sync_page_attachments(self, page_title):
         # Scan docs folder for files matching page_title (case-insensitive, underscores/spaces normalized)
