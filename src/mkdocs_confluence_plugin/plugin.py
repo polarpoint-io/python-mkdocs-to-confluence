@@ -230,10 +230,6 @@ class ConfluencePlugin(BasePlugin):
         return title.strip().lower().replace(" ", "")
 
     def ensure_folder_pages_exist(self, nav_tree, parent_id=None):
-        """
-        Recursively ensure that folder pages (dict keys in nav_tree) exist in Confluence
-        before publishing children. Creates placeholder pages if missing.
-        """
         for node in nav_tree:
             if isinstance(node, dict):
                 for folder_title, children in node.items():
@@ -260,11 +256,14 @@ class ConfluencePlugin(BasePlugin):
                     else:
                         log.debug(f"Folder page '{folder_title}' already exists with ID {folder_id}")
 
-                    # Recurse into children using folder_id as parent_id
-                    self.ensure_folder_pages_exist(children, parent_id=folder_id)
+                    if folder_id:
+                        self.ensure_folder_pages_exist(children, parent_id=folder_id)
+                    else:
+                        log.warning(f"Skipping children of '{folder_title}' due to missing folder page ID")
             else:
-                # It's a leaf page (string), no folder creation needed
+                # leaf page (string), no folder creation needed
                 pass
+
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
