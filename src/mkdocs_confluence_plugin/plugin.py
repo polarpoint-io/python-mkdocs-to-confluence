@@ -240,6 +240,7 @@ class ConfluencePlugin(BasePlugin):
 
         self.publish_nav_structure(self.tab_nav, parent_id=parent_id)
 
+
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
             if isinstance(node, dict):
@@ -247,11 +248,12 @@ class ConfluencePlugin(BasePlugin):
                     page_id = self.find_or_create_page(title, parent_id)
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
+                page_id = self.find_or_create_page(node, parent_id)
                 page = next((p for p in self.pages if p["title"] == node), None)
                 if page:
                     self.publish_page(node, page["body"], parent_id)
-                    self.sync_page_attachments(node)
-
+                self.sync_page_attachments(node)
+                
     def find_or_create_page(self, title, parent_id=None):
         page_id = self.find_page_id(title)
         if page_id:
