@@ -209,6 +209,10 @@ class ConfluencePlugin(BasePlugin):
         if self.config.get("parent_page_name"):
             parent_id = self.find_page_id(self.config["parent_page_name"])
 
+        # Ensure all folder pages exist before publishing the nav structure
+        self.ensure_folder_pages_exist(self.tab_nav, parent_id=parent_id)
+
+        # Now publish pages according to nav structure
         self.publish_nav_structure(self.tab_nav, parent_id=parent_id)
 
         log.info(f"🚧 Total pages queued: {len(self.pages)}")
@@ -218,20 +222,60 @@ class ConfluencePlugin(BasePlugin):
             body = page["body"]
             self.create_or_update_page(title, body, parent_id)
 
-        # After pages, sync attachments
+        # Sync attachments after page creation
         for page in self.pages:
             self.sync_page_attachments(page["title"])
 
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
 
+    def ensure_folder_pages_exist(self, nav_tree, parent_id=None):
+        """
+        Recursively ensure that folder pages (dict keys in nav_tree) exist in Confluence
+        before publishing children. Creates placeholder pages if missing.
+        """
+        for node in nav_tree:
+            if isinstance(node, dict):
+                for folder_title, children in node.items():
+                    folder_id = self.find_page_id(folder_title)
+                    if not folder_id:
+                        log.info(f"Creating placeholder folder page '{folder_title}' under parent ID {parent_id}")
+                        if self.dryrun:
+                            log.info(f"DRYRUN: Would create folder page '{folder_title}'")
+                            folder_id = None
+                        else:
+                            result = self.confluence.create_page(
+                                space=self.config["space"],
+                                title=folder_title,
+                                body=TEMPLATE_BODY,
+                                parent_id=parent_id,
+                                representation="storage",
+                            )
+                            folder_id = result.get("id") if result else None
+                            if folder_id:
+                                self.page_ids[folder_title] = folder_id
+                                self.page_versions[folder_title] = 1
+                            else:
+                                log.error(f"Failed to create folder page '{folder_title}'")
+                    else:
+                        log.debug(f"Folder page '{folder_title}' already exists with ID {folder_id}")
+
+                    # Recurse into children using folder_id as parent_id
+                    self.ensure_folder_pages_exist(children, parent_id=folder_id)
+            else:
+                # It's a leaf page (string), no folder creation needed
+                pass
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
             if isinstance(node, dict):
                 for title, children in node.items():
-                    page_id = self.find_or_create_page(title, parent_id)
-                    self.page_ids[title] = page_id  # store page ID here
+                    page_id = self.find_page_id(title)
+                    if not page_id:
+                        # If page does not exist (should not happen due to ensure_folder_pages_exist),
+                        # create it as a fallback with template body
+                        page_id = self.find_or_create_page(title, parent_id)
+                    self.page_ids[title] = page_id
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
                 normalized_node = self._normalize_title(node)
@@ -244,8 +288,6 @@ class ConfluencePlugin(BasePlugin):
                     self.sync_page_attachments(node)
                 else:
                     log.warning(f"❌ Page titled '{node}' not found in self.pages")
-
-
 
     def publish_page(self, title, body, parent_id):
         page_id = self.find_page_id(title)
