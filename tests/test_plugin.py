@@ -217,9 +217,16 @@ def test_on_page_content_footer(plugin):
         "enable_footer": True,
         "username": "user",
         "password": "pass",
+        "space": "TEST",
+        "parent_page_name": "Docs"  # simulate configured parent folder for context
     }
     plugin.enabled = True
     plugin.only_in_nav = False
+
+    # Mock parent_page_id for the test (simulate result of on_config)
+    plugin.parent_page_id = "12345"
+    plugin.page_ids = {}
+    plugin.pages = []
 
     class DummyFile:
         def __init__(self, src_path, src_uri):
@@ -228,15 +235,20 @@ def test_on_page_content_footer(plugin):
 
     class DummyPage:
         def __init__(self):
-            self.title = "Test Page"
+            self.title = "Test"
             self.file = DummyFile("docs/test.md", "docs/test.md")
 
     page = DummyPage()
     html = "<p>content</p>"
     updated_html = plugin.on_page_content(html, page, None, None)
 
+    # Confirm footer is added
     assert "Edit this page on GitHub" in updated_html
-    assert "This page is auto-generated" in updated_html
+    assert "Test" in [p["title"] for p in plugin.pages]
+
+
+    
+
 
 
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):

@@ -203,13 +203,32 @@ class ConfluencePlugin(BasePlugin):
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
+
     def on_page_content(self, html, page: Page, config, files):
         if not self.enabled:
             return html
 
-        self.pages.append({"title": page.title, "body": html})
-        log.info(f"📄 Queued page for publish: {page.title}")
+        # Build the page path and convert to Confluence-style titles
+        page_path = page.file.src_path.replace("\\", "/").split("/")
+        if page_path[-1].endswith(".md"):
+            page_path[-1] = page_path[-1][:-3]
+        page_titles = [part.replace("_", " ").title() for part in page_path]
 
+        # Traverse to find the parent ID based on the folder hierarchy
+        parent_id = self.parent_page_id
+        for part in page_titles[:-1]:
+            parent_id = self.page_ids.get((part, parent_id), parent_id)
+
+        # Append the page with parent_id
+        self.pages.append({
+            "title": page_titles[-1],
+            "body": html,
+            "parent_id": parent_id
+        })
+
+        log.info(f"📄 Queued page for publish: {' / '.join(page_titles)}")
+
+        # Optional footer
         if self.config.get("enable_footer", False):
             relative_path = page.file.src_path
             github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
@@ -224,6 +243,8 @@ class ConfluencePlugin(BasePlugin):
             html += footer_macro
 
         return html
+
+
 
 
     def on_post_build(self, config, **kwargs):
@@ -260,7 +281,10 @@ class ConfluencePlugin(BasePlugin):
                 else:
                     log.info(f"DRYRUN: Would create placeholder page '{title}'")
 
+
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
+
+        self.publish_nav_structure(self.tab_nav, parent_id=self.parent_page_id)
 
 
     def _normalize_title(self, title: str) -> str:
