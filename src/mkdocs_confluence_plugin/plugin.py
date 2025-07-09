@@ -231,6 +231,7 @@ class ConfluencePlugin(BasePlugin):
             if isinstance(node, dict):
                 for title, children in node.items():
                     page_id = self.find_or_create_page(title, parent_id)
+                    self.page_ids[title] = page_id  # store page ID here
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
                 normalized_node = self._normalize_title(node)
@@ -243,6 +244,7 @@ class ConfluencePlugin(BasePlugin):
                     self.sync_page_attachments(node)
                 else:
                     log.warning(f"❌ Page titled '{node}' not found in self.pages")
+
 
 
     def publish_page(self, title, body, parent_id):
@@ -334,19 +336,32 @@ class ConfluencePlugin(BasePlugin):
             else:
                 log.error(f"Failed to create page '{title}'")
         else:
-            # Page exists, update it
+            # Page exists, update it with version in payload (not as kwarg)
             version = self.page_versions.get(title, 1) + 1
             log.info(f"Updating Confluence page '{title}' (version {version})")
             if self.dryrun:
                 log.info(f"DRYRUN: Would update page '{title}' to version {version}")
                 return
 
-            response = self.confluence.update_page(page_id, title, body, version=version)
-            if response:
+            data = {
+                "version": {"number": version},
+                "title": title,
+                "type": "page",
+                "body": {
+                    "storage": {
+                        "value": body,
+                        "representation": "storage"
+                    }
+                }
+            }
+            url = f"{self.config['host_url']}/rest/api/content/{page_id}"
+            response = self.session.put(url, json=data, auth=(self.config["username"], self.config["password"]))
+            if response.ok:
                 log.info(f"Successfully updated page '{title}' to version {version}")
                 self.page_versions[title] = version
             else:
-                log.error(f"Failed to update page '{title}'")
+                log.error(f"Failed to update page '{title}': {response.status_code} {response.text}")
+
 
     def find_page_id(self, title):
         if title in self.page_ids:
