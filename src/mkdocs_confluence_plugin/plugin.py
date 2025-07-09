@@ -65,8 +65,14 @@ class ConfluencePlugin(BasePlugin):
         ("github_base_url", config_options.Type(str, default=None)),
         ("space", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
-        ("username", config_options.Type(str, default=environ.get("CONFLUENCE_USERNAME", None))),
-        ("password", config_options.Type(str, default=environ.get("CONFLUENCE_PASSWORD", None))),
+        (
+            "username",
+            config_options.Type(str, default=environ.get("CONFLUENCE_USERNAME", None)),
+        ),
+        (
+            "password",
+            config_options.Type(str, default=environ.get("CONFLUENCE_PASSWORD", None)),
+        ),
         ("enabled_if_env", config_options.Type(str, default=None)),
         ("verbose", config_options.Type(bool, default=False)),
         ("debug", config_options.Type(bool, default=False)),
@@ -89,64 +95,55 @@ class ConfluencePlugin(BasePlugin):
         self.only_in_nav = True
         self.dryrun = False
 
-
     def on_config(self, config):
+        plugin_cfg = self.config
 
-        plugin_cfg = self.config  # plugin config dict
-
-        # If explicitly disabled, turn off plugin
         if not plugin_cfg.get("enabled", True):
             self.enabled = False
             return config
 
-        # Environment variable fallback for username and password
         if not plugin_cfg.get("username"):
             plugin_cfg["username"] = os.environ.get("CONFLUENCE_USERNAME")
         if not plugin_cfg.get("password"):
             plugin_cfg["password"] = os.environ.get("CONFLUENCE_PASSWORD")
 
-        # Validate required keys after fallback
         required_keys = ["host_url", "username", "password", "space"]
         missing_keys = [k for k in required_keys if not plugin_cfg.get(k)]
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
 
-        # Initialize Confluence client
         self.confluence = Confluence(
             url=plugin_cfg["host_url"].replace("/rest/api/content", ""),
             username=plugin_cfg["username"],
             password=plugin_cfg["password"],
         )
 
-        # Set other attributes
         self.default_labels = plugin_cfg.get("default_labels", ["cpe", "mkdocs"])
 
         if plugin_cfg.get("debug", False):
             log.setLevel(logging.DEBUG)
 
-        # Enable toggle by env var if specified
         enabled_if_env = plugin_cfg.get("enabled_if_env")
         if enabled_if_env:
             self.enabled = os.environ.get(enabled_if_env) == "1"
             if not self.enabled:
                 log.warning(
-                    f"Exporting MKDOCS pages to Confluence turned OFF: "
-                    f"(set environment variable {enabled_if_env} to 1 to enable)"
+                    f"Exporting MKDOCS pages to Confluence turned OFF: (set environment variable {enabled_if_env} to 1 to enable)"
                 )
                 return config
             else:
-                log.info(f"Exporting MKDOCS pages to Confluence turned ON by var {enabled_if_env}==1!")
+                log.info(
+                    f"Exporting MKDOCS pages to Confluence turned ON by var {enabled_if_env}==1!"
+                )
         else:
             log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
             self.enabled = True
-
 
         self.dryrun = plugin_cfg.get("dryrun", False)
         if self.dryrun:
             log.warning("- DRYRUN MODE turned ON")
 
         return config
-
 
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
@@ -161,7 +158,7 @@ class ConfluencePlugin(BasePlugin):
         for file in files.documentation_pages():
             parts = file.src_path.split(os.sep)
             if parts[-1].endswith(".md"):
-                parts[-1] = parts[-1][:-3]  # remove .md extension
+                parts[-1] = parts[-1][:-3]
             add_to_tree(tree, parts)
 
         def flatten_tree(t):
@@ -194,6 +191,15 @@ class ConfluencePlugin(BasePlugin):
 
         relative_path = page.file.src_path
         github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
+        header = f"[Update markdown]({github_url})\n\n"
+        return header + markdown
+
+    def on_page_markdown(self, markdown, page: Page, config, files):
+        if not hasattr(page, "file") or not page.file.src_path:
+            return markdown
+
+        relative_path = page.file.src_path
+        github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
 
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
@@ -204,10 +210,8 @@ class ConfluencePlugin(BasePlugin):
         if not self.enabled:
             return html
 
-        # nav = [tab.strip() for tab in ConfluencePlugin.tab_nav]
-        # if self.only_in_nav and not (page.title in nav or page.file.src_uri in nav):
-        #     log.debug(f"Page '{page.file.src_uri}' is not in nav! Skipping it.")
-        #     return html
+        self.pages.append({"title": page.title, "body": html})
+        log.info(f"📄 Added page to publish queue: {page.title}")
 
         if self.config.get("enable_footer", False):
             relative_path = page.file.src_path
@@ -216,7 +220,7 @@ class ConfluencePlugin(BasePlugin):
             <ac:structured-macro ac:name="info">
                 <ac:rich-text-body>
                     <p style="font-size:small;">{MKDOCS_FOOTER}</p>
-                    <p style="font-size:small;">✏️ <a href="{github_url}">Edit this page on GitHub</a></p>
+                    <p style="font-size:small;">✏️ <a href=\"{github_url}\">Edit this page on GitHub</a></p>
                 </ac:rich-text-body>
             </ac:structured-macro>
             """
@@ -229,6 +233,10 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
+        log.info(f"🚧 Pages to publish: {len(self.pages)}")
+        for page in self.pages:
+            log.info(f" - {page['title']}")
+
         space = self.config.get("space")
 
         for page in getattr(self, "pages", []):
@@ -238,11 +246,15 @@ class ConfluencePlugin(BasePlugin):
             if title in self.page_ids:
                 page_id = self.page_ids[title]
                 version = self.page_versions.get(title, 1)
-                log.info(f"Updating Confluence page '{title}' (ID: {page_id}) to version {version + 1}")
+                log.info(
+                    f"Updating Confluence page '{title}' (ID: {page_id}) to version {version + 1}"
+                )
                 if self.dryrun:
                     log.info(f"DRYRUN: Would update page '{title}'")
                     continue
-                response = self.confluence.update_page(page_id, title, body, version=version + 1)
+                response = self.confluence.update_page(
+                    page_id, title, body, version=version + 1
+                )
                 if response:
                     log.info(f"Successfully updated page '{title}'")
                     self.page_versions[title] = version + 1
@@ -339,7 +351,9 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"Handling attachment: '{page_name}', FILE: {filepath}")
         page_id = self.find_page_id(page_name)
         if not page_id:
-            log.error(f"Cannot find Confluence page id for '{page_name}'. Attachment skipped.")
+            log.error(
+                f"Cannot find Confluence page id for '{page_name}'. Attachment skipped."
+            )
             return
 
         file_hash = self.get_file_sha1(filepath)
@@ -347,9 +361,13 @@ class ConfluencePlugin(BasePlugin):
         existing_attachment = self.get_attachment(page_id, filepath)
         if existing_attachment:
             file_hash_regex = re.compile(r"\[v([a-f0-9]+)\]")
-            current_hash_match = file_hash_regex.search(existing_attachment.get("metadata", ""))
+            current_hash_match = file_hash_regex.search(
+                existing_attachment.get("metadata", "")
+            )
             if current_hash_match and current_hash_match.group(1) == file_hash:
-                log.info(f"Attachment '{filepath.name}' is up-to-date. Skipping upload.")
+                log.info(
+                    f"Attachment '{filepath.name}' is up-to-date. Skipping upload."
+                )
                 return
             else:
                 self.delete_attachment(existing_attachment["id"])
@@ -376,7 +394,9 @@ class ConfluencePlugin(BasePlugin):
         if response.status_code in [200, 201]:
             log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
         else:
-            log.error(f"Failed to upload attachment '{filepath.name}' with status {response.status_code}.")
+            log.error(
+                f"Failed to upload attachment '{filepath.name}' with status {response.status_code}."
+            )
 
     def delete_attachment(self, attachment_id):
         url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
@@ -384,7 +404,9 @@ class ConfluencePlugin(BasePlugin):
         if response.status_code == 204:
             log.info(f"Deleted attachment ID {attachment_id}.")
         else:
-            log.error(f"Failed to delete attachment ID {attachment_id} with status {response.status_code}.")
+            log.error(
+                f"Failed to delete attachment ID {attachment_id} with status {response.status_code}."
+            )
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()
