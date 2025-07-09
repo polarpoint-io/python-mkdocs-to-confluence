@@ -203,34 +203,20 @@ class ConfluencePlugin(BasePlugin):
             log.info("Confluence plugin disabled; skipping post-build.")
             return
 
-        log.info("Starting Confluence post-build publishing process")
-        log.debug(f"Nav structure for folder pages creation: {self.tab_nav}")
+        log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
+        self.ensure_folder_pages_exist(self.tab_nav, parent_id=None)
 
-        try:
-            self.ensure_folder_pages_exist(self.tab_nav, parent_id=None)
-            log.info("Folder pages ensured.")
+        log.info(f"📤 Publishing structured navigation to Confluence")
+        self.publish_nav_structure(self.tab_nav, parent_id=None)
 
-            self.publish_nav_structure(self.tab_nav, parent_id=None)
-            log.info("Navigation structure published.")
+        log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
 
-            log.info(f"🚧 Total pages queued for create/update: {len(self.pages)}")
-            for page in self.pages:
-                log.debug(f"Creating/updating page: {page['title']}")
-                self.create_or_update_page(page["title"], page["body"], parent_id=None)
-
-            log.info("All pages created/updated. Starting attachment sync.")
-            for page in self.pages:
-                log.debug(f"Syncing attachments for page: {page['title']}")
-                self.sync_page_attachments(page["title"])
-
-            log.info("Confluence post-build publishing process completed successfully.")
-        except Exception as e:
-            log.error(f"Error during Confluence post-build publishing: {e}", exc_info=True)
 
 
 
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
+
 
     def ensure_folder_pages_exist(self, nav_tree, parent_id=None):
         for node in nav_tree:
@@ -258,12 +244,19 @@ class ConfluencePlugin(BasePlugin):
                                 log.info(f"Created folder page '{folder_title}' with ID {folder_id}")
                             else:
                                 log.error(f"Failed to create folder page '{folder_title}'")
+                                folder_id = None
                     else:
                         log.debug(f"Folder page '{folder_title}' already exists with ID {folder_id}")
 
+                    if folder_id and not any(p["title"] == folder_title and p.get("parent_id") == parent_id for p in self.pages):
+                        self.pages.append({
+                            "title": folder_title,
+                            "body": TEMPLATE_BODY,
+                            "parent_id": parent_id,
+                            "is_folder": True,
+                        })
+
                     self.ensure_folder_pages_exist(children, parent_id=folder_id)
-            else:
-                pass
 
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
@@ -273,34 +266,45 @@ class ConfluencePlugin(BasePlugin):
                     page_id = self.find_page_id(title, parent_id=parent_id)
                     if not page_id:
                         page_id = self.find_or_create_page(title, parent_id=parent_id)
+                        log.info(f"Folder page '{title}' created or found with ID {page_id}")
+
                     self.page_ids[(title, parent_id)] = page_id
+
+                    if not any(p["title"] == title and p.get("parent_id") == parent_id for p in self.pages):
+                        self.pages.append({
+                            "title": title,
+                            "body": TEMPLATE_BODY,
+                            "parent_id": parent_id,
+                            "is_folder": True,
+                        })
+
                     self.publish_nav_structure(children, parent_id=page_id)
             else:
                 normalized_node = self._normalize_title(node)
                 page = next(
-                    (p for p in self.pages if self._normalize_title(p["title"]) == normalized_node),
+                    (p for p in self.pages if self._normalize_title(p["title"]) == normalized_node and p.get("parent_id") == parent_id),
                     None
                 )
                 if page:
-                    self.publish_page(node, page["body"], parent_id)
-                    self.sync_page_attachments(node)
+                    log.debug(f"Publishing page '{page['title']}' under parent ID {parent_id}")
+                    self.publish_page(page["title"], page["body"], parent_id)
+                    self.sync_page_attachments(page["title"], parent_id)
                 else:
-                    log.warning(f"❌ Page titled '{node}' not found in self.pages")
+                    log.warning(f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}")
+
 
     def publish_page(self, title, body, parent_id):
-        page_id = self.find_page_id(title)
-
+        page_id = self.find_page_id(title, parent_id=parent_id)
         if page_id:
             log.info(f"Updating Confluence page '{title}' (ID: {page_id})")
             if self.dryrun:
                 log.info(f"DRYRUN: Would update page '{title}'")
                 return
 
-            response = self.confluence.update_page(
-                page_id, title, body
-            )
+            response = self.confluence.update_page(page_id, title, body)
             if response:
                 log.info(f"Successfully updated page '{title}'")
+                self.page_versions[(title, parent_id)] = self.page_versions.get((title, parent_id), 1) + 1
             else:
                 log.error(f"Failed to update page '{title}'")
         else:
@@ -320,19 +324,21 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"Successfully created page '{title}'")
                 page_id = response.get("id")
                 if page_id:
-                    self.page_ids[title] = page_id
+                    self.page_ids[(title, parent_id)] = page_id
+                    self.page_versions[(title, parent_id)] = 1
             else:
                 log.error(f"Failed to create page '{title}'")
 
-
     def find_or_create_page(self, title, parent_id=None):
-        page_id = self.find_page_id(title)
+        # Try to find page ID with parent context
+        page_id = self.find_page_id(title, parent_id=parent_id)
         if page_id:
             return page_id
 
         log.info(f"Creating Confluence page '{title}' under parent ID {parent_id}")
         if self.dryrun:
             log.info(f"DRYRUN: Would create page '{title}'")
+            # Optionally, return a dummy ID or None
             return None
 
         result = self.confluence.create_page(
@@ -344,8 +350,9 @@ class ConfluencePlugin(BasePlugin):
         )
         if result and "id" in result:
             page_id = result["id"]
-            self.page_ids[title] = page_id
-            self.page_versions[title] = 1
+            # Use tuple key for consistency
+            self.page_ids[(title, parent_id)] = page_id
+            self.page_versions[(title, parent_id)] = 1
             return page_id
 
         log.error(f"Failed to create or find page '{title}'")
@@ -427,7 +434,7 @@ class ConfluencePlugin(BasePlugin):
             if parent_id:
                 for r in results["results"]:
                     ancestors = r.get("ancestors") or r.get("content", {}).get("ancestors") or []
-                    if any(a.get("id") == str(parent_id) for a in ancestors):
+                    if ancestors and str(ancestors[-1].get("id")) == str(parent_id):
                         page = r
                         break
             else:
@@ -444,16 +451,19 @@ class ConfluencePlugin(BasePlugin):
         return None
 
 
-    def sync_page_attachments(self, page_title):
-        # Scan docs folder for files matching page_title (case-insensitive, underscores/spaces normalized)
+    def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
+        page_id = self.page_ids.get((page_title, parent_id))
+        if not page_id:
+            log.warning(f"Attachment sync skipped: Page ID for '{page_title}' with parent '{parent_id}' not found")
+            return
         for root, _, files in os.walk("docs"):
             for file in files:
                 if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")):
                     filepath = Path(root) / file
-                    # Check if normalized page_title is in filename stem (simple heuristic)
                     if normalized_title in filepath.stem.lower().replace(" ", "_"):
-                        self.add_or_update_attachment(page_title, filepath)
+                        self.add_or_update_attachment(page_id, page_title, filepath)
+
 
     def add_or_update_attachment(self, page_name, filepath):
         log.info(f"Handling attachment for page '{page_name}': file '{filepath.name}'")
