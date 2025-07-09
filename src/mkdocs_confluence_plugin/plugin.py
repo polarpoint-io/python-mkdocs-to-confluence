@@ -245,6 +245,44 @@ class ConfluencePlugin(BasePlugin):
                     log.warning(f"❌ Page titled '{node}' not found in self.pages")
 
 
+    def publish_page(self, title, body, parent_id):
+        page_id = self.find_page_id(title)
+
+        if page_id:
+            log.info(f"Updating Confluence page '{title}' (ID: {page_id})")
+            if self.dryrun:
+                log.info(f"DRYRUN: Would update page '{title}'")
+                return
+
+            response = self.confluence.update_page(
+                page_id, title, body
+            )
+            if response:
+                log.info(f"Successfully updated page '{title}'")
+            else:
+                log.error(f"Failed to update page '{title}'")
+        else:
+            log.info(f"Creating new Confluence page '{title}'")
+            if self.dryrun:
+                log.info(f"DRYRUN: Would create page '{title}'")
+                return
+
+            response = self.confluence.create_page(
+                space=self.config["space"],
+                title=title,
+                body=body,
+                parent_id=parent_id,
+                representation="storage",
+            )
+            if response:
+                log.info(f"Successfully created page '{title}'")
+                page_id = response.get("id")
+                if page_id:
+                    self.page_ids[title] = page_id
+            else:
+                log.error(f"Failed to create page '{title}'")
+
+
     def find_or_create_page(self, title, parent_id=None):
         page_id = self.find_page_id(title)
         if page_id:
