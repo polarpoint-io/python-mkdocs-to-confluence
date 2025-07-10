@@ -109,10 +109,14 @@ class ConfluencePlugin(BasePlugin):
         if enabled_if_env:
             self.enabled = os.environ.get(enabled_if_env) == "1"
             if not self.enabled:
-                log.warning(f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable.")
+                log.warning(
+                    f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable."
+                )
                 return config
             else:
-                log.info(f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1).")
+                log.info(
+                    f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1)."
+                )
         else:
             log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
 
@@ -127,32 +131,41 @@ class ConfluencePlugin(BasePlugin):
                 page_id = self.find_page_id(part, parent_id=current_parent_id)
                 if not page_id:
                     if self.dryrun:
-                        log.warning(f"DRYRUN: Would create missing intermediate page: {part}")
+                        log.warning(
+                            f"DRYRUN: Would create missing intermediate page: {part}"
+                        )
                         page_id = f"DUMMY_ID_{part}"
                     else:
-                        log.warning(f"Intermediate parent page '{part}' not found. Creating it...")
+                        log.warning(
+                            f"Intermediate parent page '{part}' not found. Creating it..."
+                        )
                         result = self.confluence.create_page(
                             space=plugin_cfg["space"],
                             title=part,
                             body=TEMPLATE_BODY,
                             parent_id=current_parent_id,
-                            representation="storage"
+                            representation="storage",
                         )
                         if result and "id" in result:
                             page_id = result["id"]
                             self.page_ids[(part, current_parent_id)] = page_id
                             self.page_versions[(part, current_parent_id)] = 1
-                            log.info(f"Created intermediate parent page '{part}' with ID {page_id}")
+                            log.info(
+                                f"Created intermediate parent page '{part}' with ID {page_id}"
+                            )
                         else:
-                            raise ValueError(f"Failed to create intermediate parent page: {part}")
+                            raise ValueError(
+                                f"Failed to create intermediate parent page: {part}"
+                            )
 
                 current_parent_id = page_id
 
             self.parent_page_id = current_parent_id
-            log.info(f"Using final root parent page ID {self.parent_page_id} for path '{plugin_cfg['parent_page_name']}'")
+            log.info(
+                f"Using final root parent page ID {self.parent_page_id} for path '{plugin_cfg['parent_page_name']}'"
+            )
 
         return config
-
 
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
@@ -203,7 +216,6 @@ class ConfluencePlugin(BasePlugin):
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
-
     def on_page_content(self, html, page: Page, config, files):
         if not self.enabled:
             return html
@@ -220,11 +232,9 @@ class ConfluencePlugin(BasePlugin):
             parent_id = self.page_ids.get((part, parent_id), parent_id)
 
         # Append the page with parent_id
-        self.pages.append({
-            "title": page_titles[-1],
-            "body": html,
-            "parent_id": parent_id
-        })
+        self.pages.append(
+            {"title": page_titles[-1], "body": html, "parent_id": parent_id}
+        )
 
         log.info(f"📄 Queued page for publish: {' / '.join(page_titles)}")
 
@@ -244,8 +254,6 @@ class ConfluencePlugin(BasePlugin):
 
         return html
 
-
-
     def on_post_build(self, config, **kwargs):
         if not self.enabled:
             log.info("Confluence plugin disabled; skipping post-build.")
@@ -257,8 +265,6 @@ class ConfluencePlugin(BasePlugin):
         self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
-
-
 
     def _normalize_title(self, title: str) -> str:
         return title.strip().lower().replace(" ", "")
@@ -350,9 +356,13 @@ class ConfluencePlugin(BasePlugin):
             else:
                 normalized_node = self._normalize_title(node)
                 page = next(
-                                (p for p in self.pages if self._normalize_title(p["title"]) == normalized_node),
-                                None
-                            )
+                    (
+                        p
+                        for p in self.pages
+                        if self._normalize_title(p["title"]) == normalized_node
+                    ),
+                    None,
+                )
                 if page:
                     log.debug(
                         f"Publishing page '{page['title']}' under parent ID {parent_id}"
@@ -363,7 +373,6 @@ class ConfluencePlugin(BasePlugin):
                     log.warning(
                         f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}"
                     )
-
 
     def publish_page(self, title, body, parent_id):
         page_id = self.find_page_id(title, parent_id=parent_id)
@@ -398,13 +407,17 @@ class ConfluencePlugin(BasePlugin):
                 )
             except requests.exceptions.HTTPError as e:
                 if "already exists" in str(e):
-                    log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
+                    log.warning(
+                        f"⚠️ Page '{title}' already exists — trying to update instead"
+                    )
                     # Fallback: retry with global search
                     page_id = self.find_page_id_or_global(title, parent_id=parent_id)
                     if page_id:
                         response = self.confluence.update_page(page_id, title, body)
                         if response:
-                            log.info(f"Successfully updated page '{title}' after creation conflict")
+                            log.info(
+                                f"Successfully updated page '{title}' after creation conflict"
+                            )
                             self.page_versions[(title, parent_id)] = (
                                 self.page_versions.get((title, parent_id), 1) + 1
                             )
@@ -422,8 +435,6 @@ class ConfluencePlugin(BasePlugin):
                     self.page_versions[(title, parent_id)] = 1
             else:
                 log.error(f"Failed to create page '{title}'")
-
-
 
     def find_or_create_page(self, title, parent_id=None):
         # Try to find page ID with parent context
@@ -555,7 +566,6 @@ class ConfluencePlugin(BasePlugin):
         )
         return None
 
-
     def find_page_id_global(self, title):
         cql = f'title = "{title}" and space = "{self.config["space"]}"'
         results = self.confluence.cql(cql)
@@ -563,18 +573,20 @@ class ConfluencePlugin(BasePlugin):
             page = results["results"][0]
             page_id = page.get("id") or page.get("content", {}).get("id")
             version = page.get("version", {}).get("number", 1)
-            log.debug(f"Found global page '{title}' with ID {page_id} (version {version})")
+            log.debug(
+                f"Found global page '{title}' with ID {page_id} (version {version})"
+            )
             return page_id
         return None
 
     def find_page_id_or_global(self, title, parent_id=None):
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
-            log.debug(f"Page '{title}' not found with parent ID {parent_id}, trying global lookup")
+            log.debug(
+                f"Page '{title}' not found with parent ID {parent_id}, trying global lookup"
+            )
             page_id = self.find_page_id_global(title)
         return page_id
-
-
 
     def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
@@ -662,14 +674,20 @@ class ConfluencePlugin(BasePlugin):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
 
-                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
+                    folder_page_id = self.find_page_id_or_global(
+                        norm_title, parent_id=parent_id
+                    )
                     if not folder_page_id:
                         if self.dryrun:
-                            log.info(f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}")
+                            log.info(
+                                f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}"
+                            )
                             folder_page_id = None
                         else:
                             try:
-                                log.info(f"Creating folder page '{norm_title}' under parent ID {parent_id}")
+                                log.info(
+                                    f"Creating folder page '{norm_title}' under parent ID {parent_id}"
+                                )
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
@@ -679,29 +697,42 @@ class ConfluencePlugin(BasePlugin):
                                 )
                                 if result and "id" in result:
                                     folder_page_id = result["id"]
-                                    self.page_ids[(norm_title, parent_id)] = folder_page_id
+                                    self.page_ids[(norm_title, parent_id)] = (
+                                        folder_page_id
+                                    )
                                     self.page_versions[(norm_title, parent_id)] = 1
-                                    log.info(f"Created folder page '{norm_title}' with ID {folder_page_id}")
+                                    log.info(
+                                        f"Created folder page '{norm_title}' with ID {folder_page_id}"
+                                    )
                                 else:
-                                    log.error(f"Failed to create folder page '{norm_title}'")
+                                    log.error(
+                                        f"Failed to create folder page '{norm_title}'"
+                                    )
                                     folder_page_id = None
                             except requests.exceptions.HTTPError as e:
                                 if "already exists" in str(e):
-                                    log.warning(f"⚠️ Folder page '{norm_title}' already exists. Skipping creation.")
-                                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
+                                    log.warning(
+                                        f"⚠️ Folder page '{norm_title}' already exists. Skipping creation."
+                                    )
+                                    folder_page_id = self.find_page_id_or_global(
+                                        norm_title, parent_id=parent_id
+                                    )
                                 else:
                                     raise
 
                     # Only add folder to self.pages if it's not already there
                     if folder_page_id and not any(
-                        p["title"] == norm_title and p.get("parent_id") == parent_id for p in self.pages
+                        p["title"] == norm_title and p.get("parent_id") == parent_id
+                        for p in self.pages
                     ):
-                        self.pages.append({
-                            "title": norm_title,
-                            "body": TEMPLATE_BODY,
-                            "parent_id": parent_id,
-                            "is_folder": True,
-                        })
+                        self.pages.append(
+                            {
+                                "title": norm_title,
+                                "body": TEMPLATE_BODY,
+                                "parent_id": parent_id,
+                                "is_folder": True,
+                            }
+                        )
 
                     # Recurse on children
                     self.build_and_publish_tree(children, parent_id=folder_page_id)
@@ -711,30 +742,43 @@ class ConfluencePlugin(BasePlugin):
                 page_title = node.strip()
 
                 existing_page = next(
-                    (p for p in self.pages if p["title"] == page_title and p.get("parent_id") == parent_id),
+                    (
+                        p
+                        for p in self.pages
+                        if p["title"] == page_title and p.get("parent_id") == parent_id
+                    ),
                     None,
                 )
 
                 if existing_page:
-                    log.info(f"Publishing page '{page_title}' under parent ID {parent_id}")
+                    log.info(
+                        f"Publishing page '{page_title}' under parent ID {parent_id}"
+                    )
                     self.publish_page(page_title, existing_page["body"], parent_id)
                     self.sync_page_attachments(page_title, parent_id)
                 else:
-                    log.warning(f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder")
+                    log.warning(
+                        f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder"
+                    )
                     if not self.dryrun:
-                        created_id = self.find_or_create_page(page_title, parent_id=parent_id)
+                        created_id = self.find_or_create_page(
+                            page_title, parent_id=parent_id
+                        )
                         if created_id:
-                            self.pages.append({
-                                "title": page_title,
-                                "body": TEMPLATE_BODY,
-                                "parent_id": parent_id,
-                                "is_folder": False,
-                            })
+                            self.pages.append(
+                                {
+                                    "title": page_title,
+                                    "body": TEMPLATE_BODY,
+                                    "parent_id": parent_id,
+                                    "is_folder": False,
+                                }
+                            )
                             self.publish_page(page_title, TEMPLATE_BODY, parent_id)
                             self.sync_page_attachments(page_title, parent_id)
                     else:
-                        log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
-
+                        log.info(
+                            f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}"
+                        )
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()
