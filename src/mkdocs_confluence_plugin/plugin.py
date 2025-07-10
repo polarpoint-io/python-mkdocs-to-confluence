@@ -728,9 +728,7 @@ class ConfluencePlugin(BasePlugin):
                                 )
                                 if result and "id" in result:
                                     folder_page_id = result["id"]
-                                    self.page_ids[(norm_title, parent_id)] = (
-                                        folder_page_id
-                                    )
+                                    self.page_ids[(norm_title, parent_id)] = folder_page_id
                                     self.page_versions[(norm_title, parent_id)] = 1
                                     log.info(
                                         f"Created folder page '{norm_title}' with ID {folder_page_id}"
@@ -789,27 +787,13 @@ class ConfluencePlugin(BasePlugin):
                     self.sync_page_attachments(page_title, parent_id)
                 else:
                     log.warning(
-                        f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder"
+                        f"⚠️ Skipping orphaned page '{page_title}' — not found in self.pages and not a folder."
                     )
-                    if not self.dryrun:
-                        created_id = self.find_or_create_page(
-                            page_title, parent_id=parent_id
-                        )
-                        if created_id:
-                            self.pages.append(
-                                {
-                                    "title": page_title,
-                                    "body": TEMPLATE_BODY,
-                                    "parent_id": parent_id,
-                                    "is_folder": False,
-                                }
-                            )
-                            self.publish_page(page_title, TEMPLATE_BODY, parent_id)
-                            self.sync_page_attachments(page_title, parent_id)
-                    else:
+                    if self.dryrun:
                         log.info(
-                            f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}"
+                            f"DRYRUN: Would skip orphaned page '{page_title}' under parent ID {parent_id}"
                         )
+
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), parent_id)
