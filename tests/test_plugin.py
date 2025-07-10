@@ -91,27 +91,36 @@ def test_publish_nav_structure_creates_pages_and_syncs_attachments(plugin):
 
 
 def test_sync_page_attachments_calls_add_or_update_attachment(
-    monkeypatch, tmp_path, plugin):
+    monkeypatch, tmp_path, plugin
+):
     subdir = tmp_path / "images"
     subdir.mkdir()
     img_file = subdir / "parent_page_image.png"
     img_file.write_bytes(b"dummy image data")
 
+    # Mock os.walk to simulate the file tree
     monkeypatch.setattr(
         "os.walk",
         lambda root: [
-            (str(tmp_path / "images"), [], ["parent_page_image.png"]),
+            (str(subdir), [], ["parent_page_image.png"]),
             (str(tmp_path), ["images"], ["other.txt"]),
         ],
     )
 
+    # ✅ Provide a valid page ID for the test
+    plugin.page_ids[("parentpage", None)] = "mock-page-id"
+
+    # ✅ Mock Confluence object to prevent actual API calls
+    plugin.confluence = Mock()
+    plugin.confluence.cql.return_value = {"results": []}
+
+    # ✅ Replace the method under test with a Mock so we can assert it's called
     plugin.add_or_update_attachment = Mock()
 
-    # ✅ Ensure page ID is available so sync proceeds
-    plugin.page_ids[("Parent Page", None)] = "mock-page-id"
-
+    # Act
     plugin.sync_page_attachments("Parent Page", parent_id=None)
 
+    # Assert
     plugin.add_or_update_attachment.assert_called_once()
 
 

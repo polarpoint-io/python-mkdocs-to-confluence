@@ -427,30 +427,39 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"✅ Created page '{title}' with ID {page_id}")
                 return
         except Exception as e:
-            # If the title already exists, attempt to update
             if "already exists with the same TITLE" in str(e):
                 log.warning(f"⚠️ Page '{title}' already exists — attempting to update")
             else:
                 log.error(f"❌ Failed to create page '{title}': {e}", exc_info=True)
                 return
 
-        # If creation failed due to existing page, attempt to update
+        # If creation failed, attempt to update
         page_id = self.find_page_id(title, parent_id=norm_parent_id)
         if not page_id:
             log.error(f"❌ Cannot update '{title}': page ID not found after creation failure")
             return
 
-        # Determine next version number
         previous_version = self.page_versions.get(cache_key, 1)
         new_version = previous_version + 1
 
         try:
-            self.confluence.update_page(page_id, title, body, version=new_version)
+            self.confluence.update_page(
+                page_id=page_id,
+                title=title,
+                body=body,
+                parent_id=norm_parent_id,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+                version=new_version
+            )
             self.page_ids[cache_key] = page_id
             self.page_versions[cache_key] = new_version
             log.info(f"🔁 Updated page '{title}' to version {new_version}")
         except Exception as e:
             log.error(f"❌ Failed to update page '{title}' (ID {page_id}): {e}", exc_info=True)
+
+
 
 
     def find_or_create_page(self, title, parent_id=None):
@@ -607,7 +616,8 @@ class ConfluencePlugin(BasePlugin):
 
     def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
-        page_id = self.page_ids.get((page_title, parent_id))
+        cache_key = self._cache_key(page_title, parent_id)
+        page_id = self.page_ids.get(cache_key) or self.find_page_id(page_title, parent_id)
         if not page_id:
             log.warning(
                 f"Attachment sync skipped: Page ID for '{page_title}' with parent '{parent_id}' not found"
@@ -621,9 +631,11 @@ class ConfluencePlugin(BasePlugin):
                         self.add_or_update_attachment(page_title, filepath)
 
 
+
     def add_or_update_attachment(self, page_title, filepath):
         log.info(f"Handling attachment for page '{page_title}': file '{filepath.name}'")
-        page_id = self.page_ids.get((page_title, None)) or self.find_page_id(page_title)
+        cache_key = self._cache_key(page_title, self.parent_page_id)
+        page_id = self.page_ids.get(cache_key) or self.find_page_id(page_title, self.parent_page_id)
         if not page_id:
             log.error(
                 f"Cannot find Confluence page id for '{page_title}'. Attachment skipped."
@@ -649,6 +661,7 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"Deleted outdated attachment '{filepath.name}'.")
 
         self.upload_attachment(page_id, filepath, attachment_comment)
+
 
 
 
