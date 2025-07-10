@@ -349,8 +349,9 @@ class ConfluencePlugin(BasePlugin):
 
 
     def _normalize_title(self, title: str) -> str:
-        table = str.maketrans('', '', string.punctuation)
+        table = str.maketrans("", "", string.punctuation)
         return title.strip().lower().translate(table).replace(" ", "")
+
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
@@ -411,10 +412,8 @@ class ConfluencePlugin(BasePlugin):
             self.dryrun_log("publish", title, parent_id)
             return
 
-        # If parent_id looks like a page title (not an ID), resolve it to an ID first
-        if parent_id is not None and not isinstance(parent_id, str):
-            parent_id = str(parent_id)
-        if parent_id and not parent_id.isdigit():
+        # Resolve parent_id if it looks like a title rather than an ID
+        if parent_id and not (isinstance(parent_id, str) and parent_id.isdigit()):
             parent_id = self.find_or_create_page(parent_id, parent_id=None)
             norm_parent_id = str(parent_id) if parent_id is not None else None
             cache_key = (norm_title, norm_parent_id)
@@ -448,10 +447,11 @@ class ConfluencePlugin(BasePlugin):
                 raise
 
 
-
-
     def find_or_create_page(self, title, parent_id=None):
-        # Try to find page ID with parent context
+        norm_title = self._normalize_title(title)
+        norm_parent_id = str(parent_id) if parent_id is not None else None
+        cache_key = (norm_title, norm_parent_id)
+
         page_id = self.find_page_id(title, parent_id=parent_id)
         if page_id:
             return page_id
@@ -459,7 +459,6 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"Creating Confluence page '{title}' under parent ID {parent_id}")
         if self.dryrun:
             self.dryrun_log("create", title, parent_id)
-            # Optionally, return a dummy ID or None
             return None
 
         result = self.confluence.create_page(
@@ -471,9 +470,8 @@ class ConfluencePlugin(BasePlugin):
         )
         if result and "id" in result:
             page_id = result["id"]
-            # Use tuple key for consistency
-            self.page_ids[(title, parent_id)] = page_id
-            self.page_versions[(title, parent_id)] = 1
+            self.page_ids[cache_key] = page_id
+            self.page_versions[cache_key] = 1
             return page_id
 
         log.error(f"Failed to create or find page '{title}'")
@@ -552,13 +550,14 @@ class ConfluencePlugin(BasePlugin):
 
 
     def find_page_id(self, title, parent_id=None):
-        title = self._normalize_title(title)
-        cache_key = (title, str(parent_id) if parent_id is not None else None)
+        norm_title = self._normalize_title(title)
+        norm_parent_id = str(parent_id) if parent_id is not None else None
+        cache_key = (norm_title, norm_parent_id)
 
         if cache_key in self.page_ids:
             return self.page_ids[cache_key]
 
-        query = f'title="{title}" and space="{self.config["space"]}"'
+        query = f'title="{title}" AND space="{self.config["space"]}"'
         response = self.confluence.cql(query)
         results = response.get("results", [])
 
@@ -568,14 +567,14 @@ class ConfluencePlugin(BasePlugin):
             ancestors = result.get("ancestors", [])
             page_parent_id = str(ancestors[-1]["id"]) if ancestors else None
 
-            if str(parent_id) == page_parent_id:
+            # Match both normalized title and exact parent ID string
+            if norm_parent_id == page_parent_id:
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = version
                 return page_id
 
         log.debug(f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}")
         return None
-
 
 
     def find_page_id_global(self, title):
@@ -591,14 +590,14 @@ class ConfluencePlugin(BasePlugin):
             return page_id
         return None
 
+
     def find_page_id_or_global(self, title, parent_id=None):
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
-            log.debug(
-                f"Page '{title}' not found with parent ID {parent_id}, trying global lookup"
-            )
+            log.debug(f"Page '{title}' not found with parent ID {parent_id}, trying global lookup")
             page_id = self.find_page_id_global(title)
         return page_id
+
 
     def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
