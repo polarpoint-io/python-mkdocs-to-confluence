@@ -272,6 +272,8 @@ class ConfluencePlugin(BasePlugin):
 
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
 
+        self.debug_dump_pages()
+        
         # Recursively create folders and pages, publishing each respecting hierarchy
         self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
 
@@ -697,6 +699,21 @@ class ConfluencePlugin(BasePlugin):
             log.error(
                 f"Failed to delete attachment ID {attachment_id} (status {response.status_code})."
             )
+
+
+    def debug_dump_pages(self):
+        log.info(f"--- Debug dump of self.pages ({len(self.pages)} entries) ---")
+        for idx, page in enumerate(self.pages, 1):
+            title = page.get("title")
+            parent_id = page.get("parent_id")
+            body = page.get("body", "")
+            is_folder = page.get("is_folder", False)
+            body_preview = body[:60].replace("\n", " ") + ("..." if len(body) > 60 else "")
+            log.info(
+                f"{idx:3}: Title='{title}', ParentID='{parent_id}', IsFolder={is_folder}, BodyLen={len(body)}, BodyPreview='{body_preview}'"
+            )
+        log.info("--- End of debug dump ---")
+
 
     def build_and_publish_tree(self, nav_tree, parent_id=None):
         for node in nav_tree:
