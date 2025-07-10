@@ -404,24 +404,15 @@ class ConfluencePlugin(BasePlugin):
     def publish_page(self, title, body, parent_id=None):
         norm_title = self._normalize_title(title)
         norm_parent_id = str(parent_id) if parent_id is not None else None
-        cache_key = (norm_title, norm_parent_id)
-        version = self.page_versions.get(cache_key, 0)
-        page_id = self.page_ids.get(cache_key)
+        cache_key = self._cache_key(title, norm_parent_id)
 
         if self.dryrun:
             self.dryrun_log("publish", title, parent_id)
             return
 
-        # Resolve parent_id if it looks like a title rather than an ID
-        if parent_id and not (isinstance(parent_id, str) and parent_id.isdigit()):
-            parent_id = self.find_or_create_page(parent_id, parent_id=None)
-            norm_parent_id = str(parent_id) if parent_id is not None else None
-            cache_key = (norm_title, norm_parent_id)
-            page_id = self.page_ids.get(cache_key)
-            version = self.page_versions.get(cache_key, 0)
-
+        # Attempt to create the page
         try:
-            log.info(f"📄 Publishing page '{title}' under parent ID {norm_parent_id}")
+            log.info(f"📄 Attempting to create page '{title}' under parent ID {norm_parent_id}")
             response = self.confluence.create_page(
                 space=self.config["space"],
                 title=title,
@@ -429,22 +420,37 @@ class ConfluencePlugin(BasePlugin):
                 parent_id=norm_parent_id,
                 representation="storage",
             )
-            page_id = response["id"]
-            self.page_ids[cache_key] = page_id
-            self.page_versions[cache_key] = 1
+            if response and "id" in response:
+                page_id = response["id"]
+                self.page_ids[cache_key] = page_id
+                self.page_versions[cache_key] = 1
+                log.info(f"✅ Created page '{title}' with ID {page_id}")
+                return
         except Exception as e:
+            # If the title already exists, attempt to update
             if "already exists with the same TITLE" in str(e):
-                log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
-                page_id = self.find_page_id(title, parent_id=norm_parent_id)
-                if page_id:
-                    version = self.page_versions.get(cache_key, 1) + 1
-                    self.confluence.update_page(page_id, title, body, version=version)
-                    self.page_ids[cache_key] = page_id
-                    self.page_versions[cache_key] = version
-                else:
-                    log.error(f"❌ Cannot update '{title}': page ID not found")
+                log.warning(f"⚠️ Page '{title}' already exists — attempting to update")
             else:
-                raise
+                log.error(f"❌ Failed to create page '{title}': {e}", exc_info=True)
+                return
+
+        # If creation failed due to existing page, attempt to update
+        page_id = self.find_page_id(title, parent_id=norm_parent_id)
+        if not page_id:
+            log.error(f"❌ Cannot update '{title}': page ID not found after creation failure")
+            return
+
+        # Determine next version number
+        previous_version = self.page_versions.get(cache_key, 1)
+        new_version = previous_version + 1
+
+        try:
+            self.confluence.update_page(page_id, title, body, version=new_version)
+            self.page_ids[cache_key] = page_id
+            self.page_versions[cache_key] = new_version
+            log.info(f"🔁 Updated page '{title}' to version {new_version}")
+        except Exception as e:
+            log.error(f"❌ Failed to update page '{title}' (ID {page_id}): {e}", exc_info=True)
 
 
     def find_or_create_page(self, title, parent_id=None):
