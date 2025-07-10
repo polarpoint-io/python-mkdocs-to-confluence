@@ -553,6 +553,27 @@ class ConfluencePlugin(BasePlugin):
         )
         return None
 
+
+    def find_page_id_global(self, title):
+        cql = f'title = "{title}" and space = "{self.config["space"]}"'
+        results = self.confluence.cql(cql)
+        if results.get("results"):
+            page = results["results"][0]
+            page_id = page.get("id") or page.get("content", {}).get("id")
+            version = page.get("version", {}).get("number", 1)
+            log.debug(f"Found global page '{title}' with ID {page_id} (version {version})")
+            return page_id
+        return None
+
+    def find_page_id_or_global(self, title, parent_id=None):
+        page_id = self.find_page_id(title, parent_id)
+        if not page_id:
+            log.debug(f"Page '{title}' not found with parent ID {parent_id}, trying global lookup")
+            page_id = self.find_page_id_global(title)
+        return page_id
+
+
+
     def sync_page_attachments(self, page_title, parent_id):
         normalized_title = page_title.lower().replace(" ", "_")
         page_id = self.page_ids.get((page_title, parent_id))
@@ -633,17 +654,13 @@ class ConfluencePlugin(BasePlugin):
             )
 
     def build_and_publish_tree(self, nav_tree, parent_id=None):
-        """
-        Recursively create folder pages and publish all pages respecting
-        the navigation hierarchy in Confluence.
-        """
         for node in nav_tree:
             if isinstance(node, dict):
                 # Folder node with children
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
 
-                    folder_page_id = self.find_page_id(norm_title, parent_id=parent_id)
+                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
                     if not folder_page_id:
                         if self.dryrun:
                             log.info(f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}")
@@ -669,7 +686,7 @@ class ConfluencePlugin(BasePlugin):
                             except requests.exceptions.HTTPError as e:
                                 if "already exists" in str(e):
                                     log.warning(f"⚠️ Folder page '{norm_title}' already exists. Skipping creation.")
-                                    folder_page_id = self.find_page_id(norm_title, parent_id=parent_id)
+                                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
                                 else:
                                     raise
 
