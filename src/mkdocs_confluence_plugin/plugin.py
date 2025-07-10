@@ -348,7 +348,6 @@ class ConfluencePlugin(BasePlugin):
         return self.find_page_id(title, parent_id) is not None
 
 
-
     def _normalize_title(self, title: str) -> str:
         table = str.maketrans('', '', string.punctuation)
         return title.strip().lower().translate(table).replace(" ", "")
@@ -401,67 +400,43 @@ class ConfluencePlugin(BasePlugin):
                         f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}"
                     )
 
-    def publish_page(self, title, body, parent_id):
-        page_id = self.find_page_id(title, parent_id=parent_id)
 
-        if page_id:
-            log.info(f"Updating Confluence page '{title}' (ID: {page_id})")
-            if self.dryrun:
-                log.info(f"DRYRUN: Would update page '{title}'")
-                return
+    def publish_page(self, title, body, parent_id=None):
+        cache_key = (title, parent_id)
+        version = self.page_versions.get(cache_key, 0)
+        page_id = self.page_ids.get(cache_key)
 
-            response = self.confluence.update_page(page_id, title, body)
-            if response:
-                log.info(f"Successfully updated page '{title}'")
-                self.page_versions[(title, parent_id)] = (
-                    self.page_versions.get((title, parent_id), 1) + 1
-                )
-            else:
-                log.error(f"Failed to update page '{title}'")
-        else:
-            log.info(f"Creating new Confluence page '{title}'")
-            if self.dryrun:
-                self.dryrun_log("create", title, parent_id)
-                return
+        if self.dryrun:
+            self.dryrun_log("publish", title, parent_id)
+            return
 
-            try:
-                response = self.confluence.create_page(
-                    space=self.config["space"],
-                    title=title,
-                    body=body,
-                    parent_id=parent_id,
-                    representation="storage",
-                )
-            except requests.exceptions.HTTPError as e:
-                if "already exists" in str(e):
-                    log.warning(
-                        f"⚠️ Page '{title}' already exists — trying to update instead"
-                    )
-                    # Fallback: retry with global search
-                    page_id = self.find_page_id_or_global(title, parent_id=parent_id)
-                    if page_id:
-                        response = self.confluence.update_page(page_id, title, body)
-                        if response:
-                            log.info(
-                                f"Successfully updated page '{title}' after creation conflict"
-                            )
-                            self.page_versions[(title, parent_id)] = (
-                                self.page_versions.get((title, parent_id), 1) + 1
-                            )
-                            return
-                        else:
-                            log.error(f"Failed to update page '{title}' after conflict")
-                            return
-                raise  # re-raise any other HTTPError
-
-            if response:
-                log.info(f"Successfully created page '{title}'")
-                page_id = response.get("id")
+        try:
+            log.info(f"📄 Publishing page '{title}' under parent ID {parent_id}")
+            response = self.confluence.create_page(
+                space=self.config["space"],
+                title=title,
+                body=body,
+                parent_id=parent_id,
+                representation="storage",
+            )
+            page_id = response["id"]
+            self.page_ids[cache_key] = page_id
+            self.page_versions[cache_key] = 1
+        except Exception as e:
+            if "already exists with the same TITLE" in str(e):
+                log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
+                page_id = self.find_page_id(title, parent_id)
                 if page_id:
+                    version = self.page_versions.get((title, parent_id), 1) + 1
+                    self.confluence.update_page(page_id, title, body, version=version)
                     self.page_ids[(title, parent_id)] = page_id
-                    self.page_versions[(title, parent_id)] = 1
+                    self.page_versions[(title, parent_id)] = version
+                else:
+                    log.error(f"❌ Cannot update '{title}': page ID not found")
             else:
-                log.error(f"Failed to create page '{title}'")
+                raise
+
+
 
     def find_or_create_page(self, title, parent_id=None):
         # Try to find page ID with parent context
@@ -563,35 +538,34 @@ class ConfluencePlugin(BasePlugin):
                     f"Failed to update page '{title}': {response.status_code} {response.text}"
                 )
 
-    def find_page_id(self, title, parent_id=None):
-        cql = f'title = "{title}" and space = "{self.config["space"]}"'
-        results = self.confluence.cql(cql)
-        if results.get("results"):
-            page = None
-            if parent_id:
-                for r in results["results"]:
-                    ancestors = (
-                        r.get("ancestors")
-                        or r.get("content", {}).get("ancestors")
-                        or []
-                    )
-                    if ancestors and str(ancestors[-1].get("id")) == str(parent_id):
-                        page = r
-                        break
-            else:
-                page = results["results"][0]
 
-            if page:
-                page_id = page.get("id") or page.get("content", {}).get("id")
-                version = page.get("version", {}).get("number", 1)
-                log.debug(f"Found page '{title}' with ID {page_id} (version {version})")
-                self.page_ids[(title, parent_id)] = page_id
-                self.page_versions[(title, parent_id)] = version
+    def find_page_id(self, title, parent_id=None):
+        title = self._normalize_title(title)
+        cache_key = (title, parent_id)
+
+        if cache_key in self.page_ids:
+            return self.page_ids[cache_key]
+
+        query = f'title="{title}" and space="{self.config["space"]}"'
+        response = self.confluence.cql(query)
+        results = response.get("results", [])
+
+        for result in results:
+            page_id = result.get("id")
+            version = result.get("version", {}).get("number", 1)
+            ancestors = result.get("ancestors", [])
+
+            page_parent_id = str(ancestors[-1]["id"]) if ancestors else None
+
+            if str(parent_id) == page_parent_id:
+                self.page_ids[cache_key] = page_id
+                self.page_versions[cache_key] = version
                 return page_id
-        log.debug(
-            f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}"
-        )
+
+        log.debug(f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}")
         return None
+
+
 
     def find_page_id_global(self, title):
         cql = f'title = "{title}" and space = "{self.config["space"]}"'
@@ -625,19 +599,18 @@ class ConfluencePlugin(BasePlugin):
             return
         for root, _, files in os.walk("docs"):
             for file in files:
-                if file.lower().endswith(
-                    (".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")
-                ):
+                if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")):
                     filepath = Path(root) / file
                     if normalized_title in filepath.stem.lower().replace(" ", "_"):
-                        self.add_or_update_attachment(page_id, page_title, filepath)
+                        self.add_or_update_attachment(page_title, filepath)
 
-    def add_or_update_attachment(self, page_name, filepath):
-        log.info(f"Handling attachment for page '{page_name}': file '{filepath.name}'")
-        page_id = self.find_page_id(page_name)
+
+    def add_or_update_attachment(self, page_title, filepath):
+        log.info(f"Handling attachment for page '{page_title}': file '{filepath.name}'")
+        page_id = self.page_ids.get((page_title, None)) or self.find_page_id(page_title)
         if not page_id:
             log.error(
-                f"Cannot find Confluence page id for '{page_name}'. Attachment skipped."
+                f"Cannot find Confluence page id for '{page_title}'. Attachment skipped."
             )
             return
 
@@ -660,6 +633,8 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"Deleted outdated attachment '{filepath.name}'.")
 
         self.upload_attachment(page_id, filepath, attachment_comment)
+
+
 
     def get_attachment(self, page_id, filepath):
         url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
@@ -806,6 +781,10 @@ class ConfluencePlugin(BasePlugin):
                         log.info(
                             f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}"
                         )
+
+    def _cache_key(self, title: str, parent_id) -> tuple:
+        return (self._normalize_title(title), parent_id)
+
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()

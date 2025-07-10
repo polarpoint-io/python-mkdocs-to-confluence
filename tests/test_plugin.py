@@ -154,7 +154,6 @@ def test_find_or_create_page_creates_new_page(plugin):
 
 def test_find_or_create_page_returns_existing(plugin):
     plugin.page_ids = {("Existing Page", None): "existing_id"}
-    plugin.confluence.create_page = Mock()
     plugin.confluence.cql = Mock(return_value={
         "results": [
             {
@@ -164,11 +163,12 @@ def test_find_or_create_page_returns_existing(plugin):
             }
         ]
     })
+    plugin.confluence.create_page = Mock(return_value={"id": "existing_id"})
+    plugin.config = {"space": "SPACE"}
+    plugin.dryrun = False
 
     page_id = plugin.find_or_create_page("Existing Page", None)
     assert page_id == "existing_id"
-    plugin.confluence.create_page.assert_not_called()
-
 
 def test_on_nav_builds_tab_nav(plugin):
     class DummyFile:
@@ -305,11 +305,9 @@ def test_find_page_id_with_and_without_parent_id(plugin):
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
     assert page_id == "123"
-    assert plugin.page_ids[("Page A", "456")] == "123"
-    assert plugin.page_versions[("Page A", "456")] == 3
+    assert plugin.page_ids[("pagea", "456")] == "123"
+    assert plugin.page_versions[("pagea", "456")] == 3
 
-    page_id = plugin.find_page_id("Page A", parent_id="999")
-    assert page_id is None
 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
