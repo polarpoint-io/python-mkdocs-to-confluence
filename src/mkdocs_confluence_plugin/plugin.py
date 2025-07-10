@@ -399,8 +399,8 @@ class ConfluencePlugin(BasePlugin):
             except requests.exceptions.HTTPError as e:
                 if "already exists" in str(e):
                     log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
-                    # Retry by finding it again
-                    page_id = self.find_page_id(title, parent_id=parent_id)
+                    # Fallback: retry with global search
+                    page_id = self.find_page_id_or_global(title, parent_id=parent_id)
                     if page_id:
                         response = self.confluence.update_page(page_id, title, body)
                         if response:
@@ -422,6 +422,7 @@ class ConfluencePlugin(BasePlugin):
                     self.page_versions[(title, parent_id)] = 1
             else:
                 log.error(f"Failed to create page '{title}'")
+
 
 
     def find_or_create_page(self, title, parent_id=None):
