@@ -705,9 +705,7 @@ class ConfluencePlugin(BasePlugin):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
 
-                    folder_page_id = self.find_page_id_or_global(
-                        norm_title, parent_id=parent_id
-                    )
+                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
                     if not folder_page_id:
                         if self.dryrun:
                             log.info(
@@ -719,10 +717,11 @@ class ConfluencePlugin(BasePlugin):
                                 log.info(
                                     f"Creating folder page '{norm_title}' under parent ID {parent_id}"
                                 )
+                                # Create folder page with EMPTY body (no TEMPLATE_BODY)
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
-                                    body=TEMPLATE_BODY,
+                                    body="",  # Empty content for folder page
                                     parent_id=parent_id,
                                     representation="storage",
                                 )
@@ -757,7 +756,7 @@ class ConfluencePlugin(BasePlugin):
                         self.pages.append(
                             {
                                 "title": norm_title,
-                                "body": TEMPLATE_BODY,
+                                "body": "",  # Keep body empty for folder marker in self.pages too
                                 "parent_id": parent_id,
                                 "is_folder": True,
                             }
@@ -787,12 +786,27 @@ class ConfluencePlugin(BasePlugin):
                     self.sync_page_attachments(page_title, parent_id)
                 else:
                     log.warning(
-                        f"⚠️ Skipping orphaned page '{page_title}' — not found in self.pages and not a folder."
+                        f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder"
                     )
-                    if self.dryrun:
+                    if not self.dryrun:
+                        created_id = self.find_or_create_page(page_title, parent_id=parent_id)
+                        if created_id:
+                            # Add to self.pages with empty body to avoid TEMPLATE_BODY
+                            self.pages.append(
+                                {
+                                    "title": page_title,
+                                    "body": "",  # Empty placeholder body instead of TEMPLATE_BODY
+                                    "parent_id": parent_id,
+                                    "is_folder": False,
+                                }
+                            )
+                            self.publish_page(page_title, "", parent_id)
+                            self.sync_page_attachments(page_title, parent_id)
+                    else:
                         log.info(
-                            f"DRYRUN: Would skip orphaned page '{page_title}' under parent ID {parent_id}"
+                            f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}"
                         )
+
 
 
     def _cache_key(self, title: str, parent_id) -> tuple:
