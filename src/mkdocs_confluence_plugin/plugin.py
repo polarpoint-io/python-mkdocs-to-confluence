@@ -203,19 +203,9 @@ class ConfluencePlugin(BasePlugin):
             return result
 
         nav_structure = flatten_tree(tree)
-        self.tab_nav = self._collect_all_page_names(nav_structure)
+        self.tab_nav = nav_structure  # 🛠️ Use nested structure directly
         log.info(f"Auto-generated nested nav: {nav_structure}")
 
-    def _collect_all_page_names(self, nav_list):
-        result = []
-        for item in nav_list:
-            if isinstance(item, dict):
-                for key, value in item.items():
-                    result.append(key)
-                    result.extend(self._collect_all_page_names(value))
-            else:
-                result.append(item)
-        return result
 
     def on_page_markdown(self, markdown, page: Page, config, files):
         if not hasattr(page, "file") or not page.file.src_path:
@@ -450,8 +440,7 @@ class ConfluencePlugin(BasePlugin):
                 parent_id=norm_parent_id,
                 type="page",
                 representation="storage",
-                minor_edit=False,
-                version=new_version
+                minor_edit=False
             )
             self.page_ids[cache_key] = page_id
             self.page_versions[cache_key] = new_version
