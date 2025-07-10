@@ -364,6 +364,7 @@ class ConfluencePlugin(BasePlugin):
                         f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}"
                     )
 
+
     def publish_page(self, title, body, parent_id):
         page_id = self.find_page_id(title, parent_id=parent_id)
 
