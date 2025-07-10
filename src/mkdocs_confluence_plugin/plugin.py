@@ -366,6 +366,7 @@ class ConfluencePlugin(BasePlugin):
 
     def publish_page(self, title, body, parent_id):
         page_id = self.find_page_id(title, parent_id=parent_id)
+
         if page_id:
             log.info(f"Updating Confluence page '{title}' (ID: {page_id})")
             if self.dryrun:
@@ -386,13 +387,32 @@ class ConfluencePlugin(BasePlugin):
                 log.info(f"DRYRUN: Would create page '{title}'")
                 return
 
-            response = self.confluence.create_page(
-                space=self.config["space"],
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                representation="storage",
-            )
+            try:
+                response = self.confluence.create_page(
+                    space=self.config["space"],
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
+            except requests.exceptions.HTTPError as e:
+                if "already exists" in str(e):
+                    log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
+                    # Retry by finding it again
+                    page_id = self.find_page_id(title, parent_id=parent_id)
+                    if page_id:
+                        response = self.confluence.update_page(page_id, title, body)
+                        if response:
+                            log.info(f"Successfully updated page '{title}' after creation conflict")
+                            self.page_versions[(title, parent_id)] = (
+                                self.page_versions.get((title, parent_id), 1) + 1
+                            )
+                            return
+                        else:
+                            log.error(f"Failed to update page '{title}' after conflict")
+                            return
+                raise  # re-raise any other HTTPError
+
             if response:
                 log.info(f"Successfully created page '{title}'")
                 page_id = response.get("id")
@@ -401,6 +421,7 @@ class ConfluencePlugin(BasePlugin):
                     self.page_versions[(title, parent_id)] = 1
             else:
                 log.error(f"Failed to create page '{title}'")
+
 
     def find_or_create_page(self, title, parent_id=None):
         # Try to find page ID with parent context
