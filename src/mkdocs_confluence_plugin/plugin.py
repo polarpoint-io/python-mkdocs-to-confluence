@@ -10,7 +10,7 @@ import contextlib
 import logging
 from urllib.parse import quote
 from pathlib import Path
-
+import string
 import mkdocs
 from mkdocs.config import config_options
 from mkdocs.plugins import BasePlugin
@@ -167,6 +167,16 @@ class ConfluencePlugin(BasePlugin):
 
         return config
 
+    def clear_cached_page_info(self):
+        self.page_ids.clear()
+        self.page_versions.clear()
+
+
+    def dryrun_log(self, action: str, title: str, parent_id=None):
+        parent_info = f" under parent ID {parent_id}" if parent_id else ""
+        log.info(f"DRYRUN: Would {action} page '{title}'{parent_info}")
+
+
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
             part = parts[0].replace("_", " ").title()
@@ -266,8 +276,7 @@ class ConfluencePlugin(BasePlugin):
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
 
-    def _normalize_title(self, title: str) -> str:
-        return title.strip().lower().replace(" ", "")
+
 
     def ensure_folder_pages_exist(self, nav_tree, parent_id=None):
         for node in nav_tree:
@@ -325,6 +334,24 @@ class ConfluencePlugin(BasePlugin):
                         )
 
                     self.ensure_folder_pages_exist(children, parent_id=folder_id)
+
+    def get_page_url(self, title, parent_id=None):
+        page_id = self.page_ids.get((title, parent_id))
+        if not page_id:
+            page_id = self.find_page_id(title, parent_id)
+        if page_id:
+            return f"{self.config['host_url'].rstrip('/')}/pages/viewpage.action?pageId={page_id}"
+        return None
+
+
+    def page_exists(self, title, parent_id=None):
+        return self.find_page_id(title, parent_id) is not None
+
+
+
+    def _normalize_title(self, title: str) -> str:
+        table = str.maketrans('', '', string.punctuation)
+        return title.strip().lower().translate(table).replace(" ", "")
 
     def publish_nav_structure(self, nav_tree, parent_id=None):
         for node in nav_tree:
@@ -394,7 +421,7 @@ class ConfluencePlugin(BasePlugin):
         else:
             log.info(f"Creating new Confluence page '{title}'")
             if self.dryrun:
-                log.info(f"DRYRUN: Would create page '{title}'")
+                self.dryrun_log("create", title, parent_id)
                 return
 
             try:
@@ -444,7 +471,7 @@ class ConfluencePlugin(BasePlugin):
 
         log.info(f"Creating Confluence page '{title}' under parent ID {parent_id}")
         if self.dryrun:
-            log.info(f"DRYRUN: Would create page '{title}'")
+            self.dryrun_log("create", title, parent_id)
             # Optionally, return a dummy ID or None
             return None
 
@@ -473,7 +500,7 @@ class ConfluencePlugin(BasePlugin):
         if not page_id:
             log.info(f"Creating new Confluence page '{title}'")
             if self.dryrun:
-                log.info(f"DRYRUN: Would create page '{title}'")
+                self.dryrun_log("create", title, parent_id)
                 return
 
             try:

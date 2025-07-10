@@ -364,6 +364,37 @@ def test_publish_nav_structure_creates_hierarchy(plugin):
     plugin.publish_page.assert_called_once_with("Final Page", "<p>Body</p>", "Middle-Top-None")
 
 
+def test_dryrun_log_logs_info(caplog, plugin):
+    with caplog.at_level("INFO"):
+        plugin.dryrun_log("create", "Sample Page", parent_id="123")
+    assert "DRYRUN: Would create page 'Sample Page' under parent ID 123" in caplog.text
+
+def test_normalize_title_strips_punctuation(plugin):
+    assert plugin._normalize_title(" Page! Title. ") == "pagetitle"
+    assert plugin._normalize_title("Another Page-Title!") == "anotherpagetitle"
+
+def test_clear_cached_page_info(plugin):
+    plugin.page_ids = {("A", None): "123"}
+    plugin.page_versions = {("A", None): 1}
+    plugin.clear_cached_page_info()
+    assert plugin.page_ids == {}
+    assert plugin.page_versions == {}
+
+def test_get_page_url_returns_correct_url(plugin):
+    plugin.config = {"host_url": "https://example.atlassian.net/wiki/rest/api/content"}
+    plugin.page_ids = {("Test Page", None): "45678"}
+    url = plugin.get_page_url("Test Page", parent_id=None)
+    assert url == "https://example.atlassian.net/wiki/rest/api/content/pages/viewpage.action?pageId=45678"
+
+def test_page_exists_returns_true_if_found(plugin):
+    plugin.find_page_id = Mock(return_value="123")
+    assert plugin.page_exists("Existing Page", parent_id=None) is True
+
+    plugin.find_page_id = Mock(return_value=None)
+    assert plugin.page_exists("Missing Page", parent_id=None) is False
+
+
+
 
 def test_get_file_sha1(tmp_path, plugin):
     file = tmp_path / "hash.txt"
