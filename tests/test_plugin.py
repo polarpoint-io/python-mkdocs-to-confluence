@@ -196,9 +196,13 @@ def test_on_nav_builds_tab_nav(plugin):
     nav = Navigation(items=[], pages=[])
     plugin.on_nav(nav, config=None, files=dummy_files)
 
-    assert "Page1" in plugin.tab_nav
-    assert "Page2" in plugin.tab_nav
-    assert "Readme" in plugin.tab_nav
+    # Flatten the nested tab_nav for assertion
+    flat_nav = plugin._collect_all_page_names(plugin.tab_nav)
+
+    assert "Page1" in flat_nav
+    assert "Page2" in flat_nav
+    assert "Readme" in flat_nav
+
 
 
 def test_on_page_markdown_adds_header(plugin):

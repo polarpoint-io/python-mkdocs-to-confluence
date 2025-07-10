@@ -167,6 +167,17 @@ class ConfluencePlugin(BasePlugin):
 
         return config
 
+    def _collect_all_page_names(self, nav_list):
+        result = []
+        for item in nav_list:
+            if isinstance(item, dict):
+                for key, value in item.items():
+                    result.append(key)
+                    result.extend(self._collect_all_page_names(value))
+            else:
+                result.append(item)
+        return result
+
     def clear_cached_page_info(self):
         self.page_ids.clear()
         self.page_versions.clear()
