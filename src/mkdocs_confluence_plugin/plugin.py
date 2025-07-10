@@ -622,31 +622,37 @@ class ConfluencePlugin(BasePlugin):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
 
-                    # Find existing folder page id or create it
                     folder_page_id = self.find_page_id(norm_title, parent_id=parent_id)
                     if not folder_page_id:
                         if self.dryrun:
                             log.info(f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}")
                             folder_page_id = None
                         else:
-                            log.info(f"Creating folder page '{norm_title}' under parent ID {parent_id}")
-                            result = self.confluence.create_page(
-                                space=self.config["space"],
-                                title=norm_title,
-                                body=TEMPLATE_BODY,
-                                parent_id=parent_id,
-                                representation="storage",
-                            )
-                            if result and "id" in result:
-                                folder_page_id = result["id"]
-                                self.page_ids[(norm_title, parent_id)] = folder_page_id
-                                self.page_versions[(norm_title, parent_id)] = 1
-                                log.info(f"Created folder page '{norm_title}' with ID {folder_page_id}")
-                            else:
-                                log.error(f"Failed to create folder page '{norm_title}'")
-                                folder_page_id = None
+                            try:
+                                log.info(f"Creating folder page '{norm_title}' under parent ID {parent_id}")
+                                result = self.confluence.create_page(
+                                    space=self.config["space"],
+                                    title=norm_title,
+                                    body=TEMPLATE_BODY,
+                                    parent_id=parent_id,
+                                    representation="storage",
+                                )
+                                if result and "id" in result:
+                                    folder_page_id = result["id"]
+                                    self.page_ids[(norm_title, parent_id)] = folder_page_id
+                                    self.page_versions[(norm_title, parent_id)] = 1
+                                    log.info(f"Created folder page '{norm_title}' with ID {folder_page_id}")
+                                else:
+                                    log.error(f"Failed to create folder page '{norm_title}'")
+                                    folder_page_id = None
+                            except requests.exceptions.HTTPError as e:
+                                if "already exists" in str(e):
+                                    log.warning(f"⚠️ Folder page '{norm_title}' already exists. Skipping creation.")
+                                    folder_page_id = self.find_page_id(norm_title, parent_id=parent_id)
+                                else:
+                                    raise
 
-                    # Add folder page to self.pages if missing
+                    # Only add folder to self.pages if it's not already there
                     if folder_page_id and not any(
                         p["title"] == norm_title and p.get("parent_id") == parent_id for p in self.pages
                     ):
@@ -657,11 +663,11 @@ class ConfluencePlugin(BasePlugin):
                             "is_folder": True,
                         })
 
-                    # Recurse on children with folder_page_id as parent
+                    # Recurse on children
                     self.build_and_publish_tree(children, parent_id=folder_page_id)
 
             else:
-                # Leaf page (string)
+                # Leaf page
                 page_title = node.strip()
 
                 existing_page = next(
@@ -688,7 +694,6 @@ class ConfluencePlugin(BasePlugin):
                             self.sync_page_attachments(page_title, parent_id)
                     else:
                         log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
-
 
 
     def get_file_sha1(self, file_path):
