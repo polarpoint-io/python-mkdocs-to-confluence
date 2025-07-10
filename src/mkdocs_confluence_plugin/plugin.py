@@ -400,9 +400,10 @@ class ConfluencePlugin(BasePlugin):
                         f"❌ Page titled '{node}' not found in self.pages under parent ID {parent_id}"
                     )
 
-
     def publish_page(self, title, body, parent_id=None):
-        cache_key = (title, parent_id)
+        norm_title = self._normalize_title(title)
+        norm_parent_id = str(parent_id) if parent_id is not None else None
+        cache_key = (norm_title, norm_parent_id)
         version = self.page_versions.get(cache_key, 0)
         page_id = self.page_ids.get(cache_key)
 
@@ -410,13 +411,23 @@ class ConfluencePlugin(BasePlugin):
             self.dryrun_log("publish", title, parent_id)
             return
 
+        # If parent_id looks like a page title (not an ID), resolve it to an ID first
+        if parent_id is not None and not isinstance(parent_id, str):
+            parent_id = str(parent_id)
+        if parent_id and not parent_id.isdigit():
+            parent_id = self.find_or_create_page(parent_id, parent_id=None)
+            norm_parent_id = str(parent_id) if parent_id is not None else None
+            cache_key = (norm_title, norm_parent_id)
+            page_id = self.page_ids.get(cache_key)
+            version = self.page_versions.get(cache_key, 0)
+
         try:
-            log.info(f"📄 Publishing page '{title}' under parent ID {parent_id}")
+            log.info(f"📄 Publishing page '{title}' under parent ID {norm_parent_id}")
             response = self.confluence.create_page(
                 space=self.config["space"],
                 title=title,
                 body=body,
-                parent_id=parent_id,
+                parent_id=norm_parent_id,
                 representation="storage",
             )
             page_id = response["id"]
@@ -425,16 +436,17 @@ class ConfluencePlugin(BasePlugin):
         except Exception as e:
             if "already exists with the same TITLE" in str(e):
                 log.warning(f"⚠️ Page '{title}' already exists — trying to update instead")
-                page_id = self.find_page_id(title, parent_id)
+                page_id = self.find_page_id(title, parent_id=norm_parent_id)
                 if page_id:
-                    version = self.page_versions.get((title, parent_id), 1) + 1
+                    version = self.page_versions.get(cache_key, 1) + 1
                     self.confluence.update_page(page_id, title, body, version=version)
-                    self.page_ids[(title, parent_id)] = page_id
-                    self.page_versions[(title, parent_id)] = version
+                    self.page_ids[cache_key] = page_id
+                    self.page_versions[cache_key] = version
                 else:
                     log.error(f"❌ Cannot update '{title}': page ID not found")
             else:
                 raise
+
 
 
 
@@ -541,7 +553,7 @@ class ConfluencePlugin(BasePlugin):
 
     def find_page_id(self, title, parent_id=None):
         title = self._normalize_title(title)
-        cache_key = (title, parent_id)
+        cache_key = (title, str(parent_id) if parent_id is not None else None)
 
         if cache_key in self.page_ids:
             return self.page_ids[cache_key]
@@ -554,7 +566,6 @@ class ConfluencePlugin(BasePlugin):
             page_id = result.get("id")
             version = result.get("version", {}).get("number", 1)
             ancestors = result.get("ancestors", [])
-
             page_parent_id = str(ancestors[-1]["id"]) if ancestors else None
 
             if str(parent_id) == page_parent_id:
