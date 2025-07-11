@@ -227,6 +227,7 @@ class ConfluencePlugin(BasePlugin):
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
+
     def on_page_content(self, html, page: Page, config, files):
         if not self.enabled:
             return html
@@ -241,6 +242,12 @@ class ConfluencePlugin(BasePlugin):
         parent_id = self.parent_page_id
         for part in page_titles[:-1]:
             parent_id = self.page_ids.get((part, parent_id), parent_id)
+
+        # Log body debug info
+        log.debug(f"on_page_content: Adding '{page_titles[-1]}' with body length {len(html)}")
+
+        if html.strip() == TEMPLATE_BODY:
+            log.warning(f"⚠️ HTML content for '{page_titles[-1]}' is TEMPLATE_BODY – check markdown rendering")
 
         # Append the page with parent_id
         self.pages.append(
@@ -264,6 +271,7 @@ class ConfluencePlugin(BasePlugin):
             html += footer_macro
 
         return html
+
 
     def on_post_build(self, config, **kwargs):
         if not self.enabled:
@@ -759,7 +767,9 @@ class ConfluencePlugin(BasePlugin):
                                     raise
 
                     if folder_page_id and not any(
-                        p["title"] == norm_title and p.get("parent_id") == parent_id for p in self.pages
+                        self._normalize_title(p["title"]) == self._normalize_title(norm_title)
+                        and p.get("parent_id") == parent_id
+                        for p in self.pages
                     ):
                         self.pages.append({
                             "title": norm_title,
@@ -772,8 +782,13 @@ class ConfluencePlugin(BasePlugin):
 
             else:
                 page_title = node.strip()
+                norm_title = self._normalize_title(page_title)
                 existing_page = next(
-                    (p for p in self.pages if p["title"] == page_title and p.get("parent_id") == parent_id),
+                    (
+                        p for p in self.pages
+                        if self._normalize_title(p["title"]) == norm_title
+                        and p.get("parent_id") == parent_id
+                    ),
                     None,
                 )
 
@@ -800,7 +815,6 @@ class ConfluencePlugin(BasePlugin):
                             self.sync_page_attachments(page_title, parent_id)
                     else:
                         log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
-
 
 
 
