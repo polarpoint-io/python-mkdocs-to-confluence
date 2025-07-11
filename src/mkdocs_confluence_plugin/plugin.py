@@ -167,6 +167,12 @@ class ConfluencePlugin(BasePlugin):
 
         return config
 
+    def on_pre_build(self, config, **kwargs):
+        if not self.enabled:
+            return
+        log.info("🛠️ Pre-building Confluence folder structure before content processing")
+        self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
+
     def _collect_all_page_names(self, nav_list):
         result = []
         for item in nav_list:
@@ -286,9 +292,6 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
 
         self.debug_dump_pages()
-
-        # Recursively create folders and pages, publishing each respecting hierarchy
-        self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
 
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
         published_titles = [
