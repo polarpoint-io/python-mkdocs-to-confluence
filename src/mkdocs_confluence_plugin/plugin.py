@@ -414,7 +414,7 @@ class ConfluencePlugin(BasePlugin):
                     )
 
     def publish_page(self, title, body, parent_id=None):
-        if not body.strip() or body.strip() == "TEMPLATE" or body.strip() == TEMPLATE_BODY:
+        if body is None or not body.strip() or body.strip() == TEMPLATE_BODY:
             log.warning(f"⚠️ Skipping publish of '{title}' due to empty or placeholder body")
             return
 
@@ -505,77 +505,6 @@ class ConfluencePlugin(BasePlugin):
 
         log.error(f"Failed to create or find page '{title}'")
         return None
-
-    def create_or_update_page(self, title, body, parent_id):
-        log.debug(
-            f"Attempting to find page ID for title='{title}', parent_id='{parent_id}'"
-        )
-        page_id = self.find_page_id(title, parent_id)
-        if not page_id:
-            log.info(f"Creating new Confluence page '{title}'")
-            if self.dryrun:
-                self.dryrun_log("create", title, parent_id)
-                return
-
-            try:
-                response = self.confluence.create_page(
-                    space=self.config["space"],
-                    title=title,
-                    body=body,
-                    parent_id=parent_id,
-                    representation="storage",
-                )
-            except Exception as e:
-                log.error(
-                    f"Exception occurred while creating page '{title}': {e}",
-                    exc_info=True,
-                )
-                return
-
-            if response:
-                page_id = response.get("id")
-                if page_id:
-                    log.info(f"Successfully created page '{title}' with ID {page_id}")
-                    self.page_ids[(self._normalize_title(title), str(parent_id) if parent_id else None)] = page_id
-                    self.page_versions[(title, parent_id)] = 1
-                else:
-                    log.error(f"Page creation response missing 'id' for page '{title}'")
-            else:
-                log.error(f"Failed to create page '{title}': No response received")
-        else:
-            version = self.page_versions.get((title, parent_id), 1) + 1
-            log.info(f"Updating Confluence page '{title}' (new version {version})")
-            if self.dryrun:
-                log.info(f"DRYRUN: Would update page '{title}' to version {version}")
-                return
-
-            data = {
-                "version": {"number": version},
-                "title": title,
-                "type": "page",
-                "body": {"storage": {"value": body, "representation": "storage"}},
-            }
-            url = f"{self.config['host_url']}/rest/api/content/{page_id}"
-            try:
-                response = self.session.put(
-                    url,
-                    json=data,
-                    auth=(self.config["username"], self.config["password"]),
-                )
-            except Exception as e:
-                log.error(
-                    f"Exception occurred while updating page '{title}': {e}",
-                    exc_info=True,
-                )
-                return
-
-            if response.ok:
-                log.info(f"Successfully updated page '{title}' to version {version}")
-                self.page_versions[(title, parent_id)] = version
-            else:
-                log.error(
-                    f"Failed to update page '{title}': {response.status_code} {response.text}"
-                )
 
 
     def find_page_id(self, title, parent_id=None):
@@ -747,7 +676,7 @@ class ConfluencePlugin(BasePlugin):
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
-                                    body="",  # Changed from TEMPLATE_BODY to empty string
+                                    body="",
                                     parent_id=parent_id,
                                     representation="storage",
                                 )
@@ -773,7 +702,7 @@ class ConfluencePlugin(BasePlugin):
                     ):
                         self.pages.append({
                             "title": norm_title,
-                            "body": "",  # Changed from TEMPLATE_BODY to empty string
+                            "body": "",
                             "parent_id": parent_id,
                             "is_folder": True,
                         })
@@ -783,39 +712,42 @@ class ConfluencePlugin(BasePlugin):
             else:
                 page_title = node.strip()
                 norm_title = self._normalize_title(page_title)
-                existing_page = next(
+                log.debug(f"Looking for page '{page_title}' under parent {parent_id}")
+                           # ✅ Get actual content page from self.pages (rendered in on_page_content)
+                content_page = next(
                     (
                         p for p in self.pages
                         if self._normalize_title(p["title"]) == norm_title
                         and p.get("parent_id") == parent_id
+                        and not p.get("is_folder")
                     ),
                     None,
                 )
 
-                if existing_page:
-                    body = existing_page.get("body", "").strip()
+                if content_page:
+                    body = content_page.get("body", "").strip()
                     if not body or body == "TEMPLATE" or body == TEMPLATE_BODY:
                         log.warning(f"⚠️ Skipping '{page_title}' due to placeholder or empty body")
                         continue
+
                     log.info(f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(body)}")
                     self.publish_page(page_title, body, parent_id)
                     self.sync_page_attachments(page_title, parent_id)
+
                 else:
-                    log.warning(f"Page '{page_title}' not found under parent ID {parent_id}, creating placeholder")
+                    log.warning(f"❌ Page '{page_title}' not found under parent ID {parent_id} — skipping or creating placeholder")
                     if not self.dryrun:
                         created_id = self.find_or_create_page(page_title, parent_id=parent_id)
                         if created_id:
                             self.pages.append({
                                 "title": page_title,
-                                "body": "",  # Use empty string, not TEMPLATE
+                                "body": "",
                                 "parent_id": parent_id,
                                 "is_folder": False,
                             })
                             self.publish_page(page_title, "", parent_id)
-                            self.sync_page_attachments(page_title, parent_id)
                     else:
                         log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
-
 
 
 
