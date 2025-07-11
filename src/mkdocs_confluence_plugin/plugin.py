@@ -605,27 +605,41 @@ class ConfluencePlugin(BasePlugin):
         cache_key = (norm_title, norm_parent_id)
 
         if cache_key in self.page_ids:
+            log.debug(f"Cache hit for page '{title}' with parent ID {parent_id}: {self.page_ids[cache_key]}")
             return self.page_ids[cache_key]
 
+        # Use normalized title for search if possible
+        # But Confluence CQL likely expects exact title, so we query raw title
         query = f'title="{title}" AND space="{self.config["space"]}"'
+        log.debug(f"Running CQL query for page '{title}' in space '{self.config['space']}': {query}")
         response = self.confluence.cql(query)
         results = response.get("results", [])
+
+        if not results:
+            log.debug(f"No pages found for title '{title}' in space '{self.config['space']}'")
+            return None
 
         for result in results:
             page_id = result.get("id")
             version = result.get("version", {}).get("number", 1)
             ancestors = result.get("ancestors", [])
+            # Immediate parent usually the last ancestor if ancestors exist
             page_parent_id = str(ancestors[-1]["id"]) if ancestors else None
 
+            log.debug(
+                f"Checking page ID {page_id} titled '{title}' with parent ID {page_parent_id} against desired parent {norm_parent_id}"
+            )
             if norm_parent_id == page_parent_id:
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = version
+                log.debug(f"Found matching page ID {page_id} for title '{title}' with parent ID {parent_id}")
                 return page_id
 
         log.debug(
-            f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}"
+            f"No page with title '{title}' found with parent ID {parent_id} in space '{self.config['space']}'"
         )
         return None
+
 
     def find_page_id_global(self, title):
         cql = f'title = "{title}" and space = "{self.config["space"]}"'
@@ -779,6 +793,8 @@ class ConfluencePlugin(BasePlugin):
             if isinstance(node, dict):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
+                    log.debug(f"Processing folder '{norm_title}' under parent ID {norm_parent_id}")
+
                     norm_key = (self._normalize_title(norm_title), norm_parent_id)
 
                     folder_page_id = self.find_page_id(norm_title, norm_parent_id)
@@ -823,18 +839,25 @@ class ConfluencePlugin(BasePlugin):
                                     if folder_page_id:
                                         self.page_ids[norm_key] = folder_page_id
                                     else:
+                                        log.error(
+                                            f"Could not find existing page ID for folder '{norm_title}' after conflict"
+                                        )
                                         raise
                                 else:
                                     raise
 
-                    # Cache the folder page in self.pages for later lookup
+                    if folder_page_id:
+                        log.debug(f"Folder '{norm_title}' has page ID {folder_page_id}")
+                    else:
+                        log.warning(f"Failed to get or create page ID for folder '{norm_title}'")
+
+                    # Cache folder page in self.pages if not already there
                     if folder_page_id and not any(
-                        self._normalize_title(p["title"])
-                        == self._normalize_title(norm_title)
-                        and self._normalize_parent_id(p.get("parent_id"))
-                        == norm_parent_id
+                        self._normalize_title(p["title"]) == self._normalize_title(norm_title)
+                        and self._normalize_parent_id(p.get("parent_id")) == norm_parent_id
                         for p in self.pages
                     ):
+                        log.debug(f"Appending folder '{norm_title}' to self.pages under parent {norm_parent_id}")
                         self.pages.append(
                             {
                                 "title": norm_title,
@@ -844,29 +867,26 @@ class ConfluencePlugin(BasePlugin):
                             }
                         )
 
-                    # Recurse to create subfolders and pages under this folder
                     if children is not None:
+                        log.debug(f"Recursing into children of folder '{norm_title}'")
                         self.build_and_publish_tree(children, parent_id=folder_page_id)
                     else:
-                        log.warning(
-                            f"No children for folder '{folder_title}', check nav structure."
-                        )
+                        log.warning(f"No children for folder '{folder_title}', check nav structure.")
 
         # Second pass: create/publish content pages (leaves) under correct folders
         for node in nav_tree:
             if not isinstance(node, dict):
                 page_title = node.strip()
                 norm_title = self._normalize_title(page_title)
+                log.debug(f"Processing leaf page '{page_title}' under parent {norm_parent_id}")
 
-                # Lookup content page with exact parent
                 content_page = next(
                     (
                         p
                         for p in self.pages
                         if self._normalize_title(p["title"]) == norm_title
                         and not p.get("is_folder")
-                        and self._normalize_parent_id(p.get("parent_id"))
-                        == norm_parent_id
+                        and self._normalize_parent_id(p.get("parent_id")) == norm_parent_id
                     ),
                     None,
                 )
@@ -905,6 +925,7 @@ class ConfluencePlugin(BasePlugin):
                         log.info(
                             f"DRYRUN: Would create placeholder page '{page_title}' under parent {norm_parent_id}"
                         )
+
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), parent_id)
