@@ -170,8 +170,8 @@ class ConfluencePlugin(BasePlugin):
     def on_pre_build(self, config, **kwargs):
         if not self.enabled:
             return
-        log.info("🛠️ Pre-building Confluence folder structure before content processing")
-        self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
+        log.info("🛠️ Pre-building Confluence folder hierarchy before content processing")
+        self.create_folder_structure_only(self.tab_nav, parent_id=self.parent_page_id)
 
     def _collect_all_page_names(self, nav_list):
         result = []
@@ -183,6 +183,56 @@ class ConfluencePlugin(BasePlugin):
             else:
                 result.append(item)
         return result
+
+    def create_folder_structure_only(self, nav_tree, parent_id=None):
+        for node in nav_tree:
+            if isinstance(node, dict):
+                for folder_title, children in node.items():
+                    norm_title = folder_title.strip()
+                    norm_key = (
+                        self._normalize_title(norm_title),
+                        str(parent_id) if parent_id else None,
+                    )
+
+                    folder_page_id = self.find_page_id_or_global(
+                        norm_title, parent_id=parent_id
+                    )
+
+                    if not folder_page_id:
+                        if self.dryrun:
+                            log.info(
+                                f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}"
+                            )
+                        else:
+                            log.info(
+                                f"Creating folder page '{norm_title}' under parent ID {parent_id}"
+                            )
+                            result = self.confluence.create_page(
+                                space=self.config["space"],
+                                title=norm_title,
+                                body="",  # ✅ Empty body
+                                parent_id=parent_id,
+                                representation="storage",
+                            )
+                            if result and "id" in result:
+                                folder_page_id = result["id"]
+                                self.page_ids[norm_key] = folder_page_id
+                                self.page_versions[norm_key] = 1
+                                log.info(
+                                    f"✅ Created folder page '{norm_title}' with ID {folder_page_id}"
+                                )
+                            else:
+                                log.error(
+                                    f"❌ Failed to create folder page '{norm_title}'"
+                                )
+                                continue
+                    else:
+                        log.debug(f"Folder page '{norm_title}' already exists.")
+
+                    # Recurse
+                    self.create_folder_structure_only(
+                        children, parent_id=folder_page_id
+                    )
 
     def clear_cached_page_info(self):
         self.page_ids.clear()
