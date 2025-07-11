@@ -243,13 +243,12 @@ class ConfluencePlugin(BasePlugin):
         for part in page_titles[:-1]:
             parent_id = self.page_ids.get((part, parent_id), parent_id)
 
-        # Log body debug info
         log.debug(f"on_page_content: Adding '{page_titles[-1]}' with body length {len(html)}")
 
         if html.strip() == TEMPLATE_BODY:
             log.warning(f"⚠️ HTML content for '{page_titles[-1]}' is TEMPLATE_BODY – check markdown rendering")
 
-        # Append the page with parent_id
+        # Append the page with parent_id and real html body (do not replace with TEMPLATE_BODY)
         self.pages.append(
             {"title": page_titles[-1], "body": html, "parent_id": parent_id}
         )
@@ -271,6 +270,7 @@ class ConfluencePlugin(BasePlugin):
             html += footer_macro
 
         return html
+
 
 
     def on_post_build(self, config, **kwargs):
@@ -310,7 +310,7 @@ class ConfluencePlugin(BasePlugin):
                             result = self.confluence.create_page(
                                 space=self.config["space"],
                                 title=folder_title,
-                                body=TEMPLATE_BODY,
+                                body="",  # Changed from TEMPLATE_BODY to empty string
                                 parent_id=parent_id,
                                 representation="storage",
                             )
@@ -338,13 +338,14 @@ class ConfluencePlugin(BasePlugin):
                         self.pages.append(
                             {
                                 "title": folder_title,
-                                "body": TEMPLATE_BODY,
+                                "body": "",  # Changed from TEMPLATE_BODY to empty string
                                 "parent_id": parent_id,
                                 "is_folder": True,
                             }
                         )
 
                     self.ensure_folder_pages_exist(children, parent_id=folder_id)
+
 
     def get_page_url(self, title, parent_id=None):
         page_id = self.page_ids.get((title, parent_id))
@@ -475,7 +476,6 @@ class ConfluencePlugin(BasePlugin):
 
 
 
-
     def find_or_create_page(self, title, parent_id=None):
         norm_title = self._normalize_title(title)
         norm_parent_id = str(parent_id) if parent_id is not None else None
@@ -493,7 +493,7 @@ class ConfluencePlugin(BasePlugin):
         result = self.confluence.create_page(
             space=self.config["space"],
             title=title,
-            body=TEMPLATE_BODY,
+            body="",  # Changed from TEMPLATE_BODY to empty string
             parent_id=parent_id,
             representation="storage",
         )
@@ -747,7 +747,7 @@ class ConfluencePlugin(BasePlugin):
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
-                                    body="",  # Avoid TEMPLATE
+                                    body="",  # Changed from TEMPLATE_BODY to empty string
                                     parent_id=parent_id,
                                     representation="storage",
                                 )
@@ -773,7 +773,7 @@ class ConfluencePlugin(BasePlugin):
                     ):
                         self.pages.append({
                             "title": norm_title,
-                            "body": "",  # Ensure no TEMPLATE body
+                            "body": "",  # Changed from TEMPLATE_BODY to empty string
                             "parent_id": parent_id,
                             "is_folder": True,
                         })
@@ -807,7 +807,7 @@ class ConfluencePlugin(BasePlugin):
                         if created_id:
                             self.pages.append({
                                 "title": page_title,
-                                "body": "",
+                                "body": "",  # Use empty string, not TEMPLATE
                                 "parent_id": parent_id,
                                 "is_folder": False,
                             })
@@ -815,6 +815,7 @@ class ConfluencePlugin(BasePlugin):
                             self.sync_page_attachments(page_title, parent_id)
                     else:
                         log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
+
 
 
 

@@ -341,14 +341,14 @@ def test_ensure_folder_pages_exist_creates_structure(plugin):
     plugin.confluence.create_page.assert_any_call(
         space="TEST",
         title="Folder A",
-        body=TEMPLATE_BODY,
+        body='',
         parent_id=None,
         representation="storage"
     )
     plugin.confluence.create_page.assert_any_call(
         space="TEST",
         title="Subfolder A1",
-        body=TEMPLATE_BODY,
+        body='',
         parent_id="123",
         representation="storage"
     )
