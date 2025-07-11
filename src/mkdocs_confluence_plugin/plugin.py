@@ -546,7 +546,6 @@ class ConfluencePlugin(BasePlugin):
             ancestors = result.get("ancestors", [])
             page_parent_id = str(ancestors[-1]["id"]) if ancestors else None
 
-            # Match both normalized title and exact parent ID string
             if norm_parent_id == page_parent_id:
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = version
@@ -679,10 +678,16 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"📄 Debug dump of self.pages ({len(self.pages)} entries):")
         for idx, page in enumerate(self.pages, 1):
             title = page.get("title", "<no title>")
-            parent_id = page.get("parent_id")
+            parent_id = (
+                str(page.get("parent_id"))
+                if page.get("parent_id") is not None
+                else "None"
+            )
             body = page.get("body", "")
             is_folder = page.get("is_folder", False)
-            body_preview = body[:60].replace("\n", " ") + ("..." if len(body) > 60 else "")
+            body_preview = body[:60].replace("\n", " ") + (
+                "..." if len(body) > 60 else ""
+            )
             log.info(
                 f"  {idx:3}: Title='{title}', ParentID='{parent_id}' ({type(parent_id).__name__}), "
                 f"IsFolder={is_folder}, BodyLen={len(body)}, BodyPreview='{body_preview}'"
@@ -690,21 +695,30 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-
     def build_and_publish_tree(self, nav_tree, parent_id=None):
         for node in nav_tree:
             if isinstance(node, dict):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
+                    norm_key = (
+                        self._normalize_title(norm_title),
+                        str(parent_id) if parent_id else None,
+                    )
 
-                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
+                    folder_page_id = self.find_page_id_or_global(
+                        norm_title, parent_id=parent_id
+                    )
                     if not folder_page_id:
                         if self.dryrun:
-                            log.info(f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}")
+                            log.info(
+                                f"DRYRUN: Would create folder page '{norm_title}' under parent ID {parent_id}"
+                            )
                             folder_page_id = None
                         else:
                             try:
-                                log.info(f"Creating folder page '{norm_title}' under parent ID {parent_id}")
+                                log.info(
+                                    f"Creating folder page '{norm_title}' under parent ID {parent_id}"
+                                )
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
@@ -714,30 +728,46 @@ class ConfluencePlugin(BasePlugin):
                                 )
                                 if result and "id" in result:
                                     folder_page_id = result["id"]
-                                    self.page_ids[(norm_title, parent_id)] = folder_page_id
-                                    self.page_versions[(norm_title, parent_id)] = 1
-                                    log.info(f"Created folder page '{norm_title}' with ID {folder_page_id}")
+                                    self.page_ids[norm_key] = folder_page_id
+                                    self.page_versions[norm_key] = 1
+                                    log.info(
+                                        f"Created folder page '{norm_title}' with ID {folder_page_id}"
+                                    )
                                 else:
-                                    log.error(f"Failed to create folder page '{norm_title}'")
+                                    log.error(
+                                        f"Failed to create folder page '{norm_title}'"
+                                    )
                                     folder_page_id = None
                             except requests.exceptions.HTTPError as e:
                                 if "already exists" in str(e):
-                                    log.warning(f"⚠️ Folder page '{norm_title}' already exists. Skipping creation.")
-                                    folder_page_id = self.find_page_id_or_global(norm_title, parent_id=parent_id)
+                                    log.warning(
+                                        f"⚠️ Folder page '{norm_title}' already exists. Skipping creation."
+                                    )
+                                    folder_page_id = self.find_page_id_or_global(
+                                        norm_title, parent_id=parent_id
+                                    )
                                 else:
                                     raise
 
                     if folder_page_id and not any(
-                        self._normalize_title(p["title"]) == self._normalize_title(norm_title)
+                        self._normalize_title(p["title"])
+                        == self._normalize_title(norm_title)
                         and p.get("parent_id") == parent_id
                         for p in self.pages
                     ):
-                        self.pages.append({
-                            "title": norm_title,
-                            "body": "",  # ✅ Explicitly set to empty to avoid "TEMPLATE"
-                            "parent_id": parent_id,
-                            "is_folder": True,
-                        })
+                        self.pages.append(
+                            {
+                                "title": norm_title,
+                                "body": "",  # ✅ Explicitly set to empty to avoid "TEMPLATE"
+                                "parent_id": parent_id,
+                                "is_folder": True,
+                            }
+                        )
+
+                    if children is None:
+                        log.warning(
+                            f"⚠️ No children for folder '{folder_title}', check nav structure."
+                        )
 
                     self.build_and_publish_tree(children, parent_id=folder_page_id)
 
@@ -748,7 +778,8 @@ class ConfluencePlugin(BasePlugin):
 
                 content_page = next(
                     (
-                        p for p in self.pages
+                        p
+                        for p in self.pages
                         if self._normalize_title(p["title"]) == norm_title
                         and not p.get("is_folder")
                         and (
@@ -762,28 +793,39 @@ class ConfluencePlugin(BasePlugin):
                 if content_page:
                     body = content_page.get("body", "").strip()
                     if not body or body == "TEMPLATE" or body == TEMPLATE_BODY:
-                        log.warning(f"⚠️ Skipping '{page_title}' due to placeholder or empty body")
+                        log.warning(
+                            f"⚠️ Skipping '{page_title}' due to placeholder or empty body"
+                        )
                         continue
 
-                    log.info(f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(body)}")
+                    log.info(
+                        f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(body)}"
+                    )
                     self.publish_page(page_title, body, parent_id)
                     self.sync_page_attachments(page_title, parent_id)
 
                 else:
-                    log.warning(f"❌ Page '{page_title}' not found under parent ID {parent_id} — skipping or creating placeholder")
+                    log.warning(
+                        f"❌ Page '{page_title}' not found under parent ID {parent_id} — skipping or creating placeholder"
+                    )
                     if not self.dryrun:
-                        created_id = self.find_or_create_page(page_title, parent_id=parent_id)
+                        created_id = self.find_or_create_page(
+                            page_title, parent_id=parent_id
+                        )
                         if created_id:
-                            self.pages.append({
-                                "title": page_title,
-                                "body": "",
-                                "parent_id": parent_id,
-                                "is_folder": False,
-                            })
+                            self.pages.append(
+                                {
+                                    "title": page_title,
+                                    "body": "",
+                                    "parent_id": parent_id,
+                                    "is_folder": False,
+                                }
+                            )
                             self.publish_page(page_title, "", parent_id)
                     else:
-                        log.info(f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}")
-
+                        log.info(
+                            f"DRYRUN: Would create placeholder page '{page_title}' under parent ID {parent_id}"
+                        )
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), parent_id)
