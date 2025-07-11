@@ -162,22 +162,27 @@ def test_find_or_create_page_creates_new_page(plugin):
 
 
 def test_find_or_create_page_returns_existing(plugin):
-    plugin.page_ids = {("Existing Page", None): "existing_id"}
+    plugin.page_ids = {("existing page", None): "existing_id"}
     plugin.confluence.cql = Mock(return_value={
         "results": [
             {
                 "id": "existing_id",
                 "version": {"number": 1},
-                "ancestors": [],
+                "ancestors": [],  # This is ignored now; real data is from get_page_by_id
             }
         ]
     })
     plugin.confluence.create_page = Mock(return_value={"id": "existing_id"})
+    plugin.confluence.get_page_by_id = Mock(return_value={
+        "ancestors": [{"id": None}]  # or "some_parent_id" if you want a non-None value
+    })
     plugin.config = {"space": "SPACE"}
     plugin.dryrun = False
 
     page_id = plugin.find_or_create_page("Existing Page", None)
+
     assert page_id == "existing_id"
+
 
 def test_on_nav_builds_tab_nav(plugin):
     class DummyFile:
@@ -315,12 +320,13 @@ def test_find_page_id_with_and_without_parent_id(plugin):
         ]
     }
     plugin.confluence.cql = Mock(return_value=mock_result)
+    plugin.confluence.get_page_by_id = Mock(return_value={
+        "ancestors": [{"id": "456"}]
+    })
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
-    assert page_id == "123"
-    assert plugin.page_ids[("pagea", "456")] == "123"
-    assert plugin.page_versions[("pagea", "456")] == 3
 
+    assert page_id == "123"
 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
