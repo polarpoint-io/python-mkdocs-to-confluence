@@ -625,9 +625,10 @@ class ConfluencePlugin(BasePlugin):
 
         for result in results:
             page_id = result.get("id")
-            version = result.get("version", {}).get("number", 1)
+            if not page_id:
+                log.warning(f"Skipping result with no page ID for title '{title}'")
+                continue
 
-            # Fetch full page info to get immediate parent id
             try:
                 page_info = self.confluence.get_page_by_id(page_id, expand="ancestors")
             except Exception as e:
@@ -637,20 +638,16 @@ class ConfluencePlugin(BasePlugin):
                 continue
 
             ancestors = page_info.get("ancestors", [])
-            if ancestors:
-                # Immediate parent is the last ancestor in the list
-                immediate_parent_id = str(ancestors[-1]["id"])
-            else:
-                immediate_parent_id = None
+            immediate_parent_id = str(ancestors[-1]["id"]) if ancestors else None
 
-            if norm_parent_id == immediate_parent_id:
+            if immediate_parent_id == norm_parent_id:
+                log.debug(
+                    f"Found page '{title}' with matching parent ID {norm_parent_id}: {page_id}"
+                )
                 self.page_ids[cache_key] = page_id
-                self.page_versions[cache_key] = version
                 return page_id
 
-        log.debug(
-            f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}"
-        )
+        log.debug(f"No matching page '{title}' found with parent ID {norm_parent_id}")
         return None
 
     def find_page_id_global(self, title):
