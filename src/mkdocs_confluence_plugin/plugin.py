@@ -273,7 +273,7 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
 
         self.debug_dump_pages()
-        
+
         # Recursively create folders and pages, publishing each respecting hierarchy
         self.build_and_publish_tree(self.tab_nav, parent_id=self.parent_page_id)
 
@@ -797,7 +797,8 @@ class ConfluencePlugin(BasePlugin):
 
                 if existing_page:
                     log.info(
-                        f"Publishing page '{page_title}' under parent ID {parent_id}"
+                       f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(existing_page['body'])}"
+                        
                     )
                     self.publish_page(page_title, existing_page["body"], parent_id)
                     self.sync_page_attachments(page_title, parent_id)
