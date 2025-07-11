@@ -643,20 +643,13 @@ class ConfluencePlugin(BasePlugin):
             else:
                 immediate_parent_id = None
 
-            log.debug(
-                f"Page '{title}' ID {page_id} immediate parent ID: {immediate_parent_id}"
-            )
-
             if norm_parent_id == immediate_parent_id:
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = version
-                log.debug(
-                    f"Found matching page ID {page_id} for title '{title}' with parent ID {parent_id}"
-                )
                 return page_id
 
         log.debug(
-            f"No page with title '{title}' found with parent ID {parent_id} in space '{self.config['space']}'"
+            f"Page '{title}' not found in space '{self.config['space']}' with parent ID {parent_id}"
         )
         return None
 
@@ -812,10 +805,6 @@ class ConfluencePlugin(BasePlugin):
             if isinstance(node, dict):
                 for folder_title, children in node.items():
                     norm_title = folder_title.strip()
-                    log.debug(
-                        f"Processing folder '{norm_title}' under parent ID {norm_parent_id}"
-                    )
-
                     norm_key = (self._normalize_title(norm_title), norm_parent_id)
 
                     folder_page_id = self.find_page_id(norm_title, norm_parent_id)
@@ -860,21 +849,15 @@ class ConfluencePlugin(BasePlugin):
                                     if folder_page_id:
                                         self.page_ids[norm_key] = folder_page_id
                                     else:
-                                        log.error(
-                                            f"Could not find existing page ID for folder '{norm_title}' after conflict"
-                                        )
                                         raise
                                 else:
                                     raise
-
-                    if folder_page_id:
-                        log.debug(f"Folder '{norm_title}' has page ID {folder_page_id}")
                     else:
-                        log.warning(
-                            f"Failed to get or create page ID for folder '{norm_title}'"
+                        log.debug(
+                            f"Folder page '{norm_title}' found with ID {folder_page_id}"
                         )
 
-                    # Cache folder page in self.pages if not already there
+                    # Cache the folder page in self.pages for later lookup
                     if folder_page_id and not any(
                         self._normalize_title(p["title"])
                         == self._normalize_title(norm_title)
@@ -882,9 +865,6 @@ class ConfluencePlugin(BasePlugin):
                         == norm_parent_id
                         for p in self.pages
                     ):
-                        log.debug(
-                            f"Appending folder '{norm_title}' to self.pages under parent {norm_parent_id}"
-                        )
                         self.pages.append(
                             {
                                 "title": norm_title,
@@ -894,9 +874,19 @@ class ConfluencePlugin(BasePlugin):
                             }
                         )
 
+                    # Recurse to create subfolders and pages under this folder ONLY if folder_page_id is valid
                     if children is not None:
-                        log.debug(f"Recursing into children of folder '{norm_title}'")
-                        self.build_and_publish_tree(children, parent_id=folder_page_id)
+                        if folder_page_id:
+                            log.debug(
+                                f"Recursing into folder '{norm_title}' with parent ID {folder_page_id}"
+                            )
+                            self.build_and_publish_tree(
+                                children, parent_id=folder_page_id
+                            )
+                        else:
+                            log.error(
+                                f"Cannot recurse into children of folder '{norm_title}' because folder_page_id is None"
+                            )
                     else:
                         log.warning(
                             f"No children for folder '{folder_title}', check nav structure."
@@ -907,10 +897,8 @@ class ConfluencePlugin(BasePlugin):
             if not isinstance(node, dict):
                 page_title = node.strip()
                 norm_title = self._normalize_title(page_title)
-                log.debug(
-                    f"Processing leaf page '{page_title}' under parent {norm_parent_id}"
-                )
 
+                # Lookup content page with exact parent
                 content_page = next(
                     (
                         p
