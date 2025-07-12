@@ -610,11 +610,13 @@ class ConfluencePlugin(BasePlugin):
             )
             return self.page_ids[cache_key]
 
-        query = f'title="{title}" AND space="{self.config["space"]}"'
+        # Add type="page" to filter only pages
+        query = f'title="{title}" AND space="{self.config["space"]}" AND type="page"'
         log.debug(
             f"Running CQL query for page '{title}' in space '{self.config['space']}': {query}"
         )
         response = self.confluence.cql(query)
+        log.debug(f"CQL response for '{title}': {response}")
         results = response.get("results", [])
 
         if not results:
@@ -624,11 +626,15 @@ class ConfluencePlugin(BasePlugin):
             return None
 
         for result in results:
-            page_id = result.get("id")
+            # Try to get page ID, either directly or nested under 'content'
+            page_id = result.get("id") or result.get("content", {}).get("id")
             if not page_id:
-                log.warning(f"Skipping result with no page ID for title '{title}'")
+                log.warning(
+                    f"Skipping result with no page ID for title '{title}': {result}"
+                )
                 continue
 
+            # Fetch full page info to check parent (ancestors)
             try:
                 page_info = self.confluence.get_page_by_id(page_id, expand="ancestors")
             except Exception as e:
@@ -638,16 +644,22 @@ class ConfluencePlugin(BasePlugin):
                 continue
 
             ancestors = page_info.get("ancestors", [])
-            immediate_parent_id = str(ancestors[-1]["id"]) if ancestors else None
+            if ancestors:
+                immediate_parent_id = str(ancestors[-1]["id"])
+            else:
+                immediate_parent_id = None
 
-            if immediate_parent_id == norm_parent_id:
+            # Match on parent ID if provided
+            if norm_parent_id is None or norm_parent_id == immediate_parent_id:
                 log.debug(
-                    f"Found page '{title}' with matching parent ID {norm_parent_id}: {page_id}"
+                    f"Found matching page '{title}' with ID {page_id} and parent ID {immediate_parent_id}"
                 )
-                self.page_ids[cache_key] = page_id
-                return page_id
+                self.page_ids[cache_key] = str(page_id)
+                return str(page_id)
 
-        log.debug(f"No matching page '{title}' found with parent ID {norm_parent_id}")
+        log.debug(
+            f"No matching page '{title}' found with parent ID {parent_id} in space '{self.config['space']}'"
+        )
         return None
 
     def find_page_id_global(self, title):
