@@ -79,8 +79,11 @@ class ConfluencePlugin(BasePlugin):
     def on_config(self, config):
         plugin_cfg = self.config
 
-        if not plugin_cfg.get("enabled", True):
-            self.enabled = False
+        # ✅ Ensure .enabled and .only_in_nav are always defined
+        self.enabled = plugin_cfg.get("enabled", True)
+        self.only_in_nav = plugin_cfg.get("only_in_nav", False)
+
+        if not self.enabled:
             return config
 
         if not plugin_cfg.get("username"):
@@ -321,7 +324,6 @@ class ConfluencePlugin(BasePlugin):
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
-
     def on_page_content(self, html, page, config, files):
         if not self.enabled or self.only_in_nav:
             return html
@@ -368,7 +370,6 @@ class ConfluencePlugin(BasePlugin):
             html += footer
 
         return html
-
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
