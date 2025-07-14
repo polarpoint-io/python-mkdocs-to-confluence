@@ -18,6 +18,7 @@ from mkdocs.structure.nav import Navigation
 from mkdocs.structure.pages import Page
 from md2cf.confluence_renderer import ConfluenceRenderer
 from atlassian import Confluence
+from urllib.parse import quote_plus 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run."
@@ -320,6 +321,11 @@ class ConfluencePlugin(BasePlugin):
             return markdown
 
         relative_path = page.file.src_path
+        github_url = f"{self.config['github_base_url']}/{quote_plus(relative_path)}"
+        header = f"[Update markdown]({github_url})\n\n"
+        return header + markdown
+
+        relative_path = page.file.src_path
         github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
@@ -421,24 +427,21 @@ class ConfluencePlugin(BasePlugin):
             )
             return
 
-        norm_title = self._normalize_title(title)
-        norm_parent_id = str(parent_id) if parent_id is not None else None
-        cache_key = self._cache_key(title, norm_parent_id)
+        cache_key = self._cache_key(title, parent_id)
 
         if self.dryrun:
             self.dryrun_log("publish", title, parent_id)
             return
 
-        # Attempt to create the page
         try:
             log.info(
-                f"📄 Attempting to create page '{title}' under parent ID {norm_parent_id}"
+                f"📄 Attempting to create page '{title}' under parent ID {parent_id}"
             )
             response = self.confluence.create_page(
                 space=self.config["space"],
                 title=title,
                 body=body,
-                parent_id=norm_parent_id,
+                parent_id=parent_id,
                 representation="storage",
             )
             if response and "id" in response:
@@ -454,8 +457,8 @@ class ConfluencePlugin(BasePlugin):
                 log.error(f"❌ Failed to create page '{title}': {e}", exc_info=True)
                 return
 
-        # If creation failed, attempt to update
-        page_id = self.find_page_id(title, parent_id=norm_parent_id)
+        # If creation failed, try to update
+        page_id = self.find_page_id(title, parent_id)
         if not page_id:
             log.error(
                 f"❌ Cannot update '{title}': page ID not found after creation failure"
@@ -470,7 +473,7 @@ class ConfluencePlugin(BasePlugin):
                 page_id=page_id,
                 title=title,
                 body=body,
-                parent_id=norm_parent_id,
+                parent_id=parent_id,
                 type="page",
                 representation="storage",
                 minor_edit=False,
@@ -538,7 +541,7 @@ class ConfluencePlugin(BasePlugin):
             self.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=body or "",
+                body=body or "",  # Ensure this is an empty string, not 'TEMPLATE'
                 parent_id=parent_id,
                 type="page",
                 representation="storage",
@@ -554,10 +557,10 @@ class ConfluencePlugin(BasePlugin):
             )
             return None
 
-    def find_or_create_page(self, title, parent_id=None):
+    def find_or_create_page(self, title, parent_id=None, is_folder=False):
         norm_title = self._normalize_title(title)
         norm_parent_id = str(parent_id) if parent_id is not None else None
-        cache_key = (norm_title, norm_parent_id)
+        cache_key = self._cache_key(title, norm_parent_id)
 
         page_id = self.find_page_id(title, parent_id=parent_id)
         if page_id:
@@ -566,12 +569,12 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"Creating Confluence page '{title}' under parent ID {parent_id}")
         if self.dryrun:
             self.dryrun_log("create", title, parent_id)
-            return None
+            return f"DUMMY_ID_{title}"
 
         result = self.confluence.create_page(
             space=self.config["space"],
             title=title,
-            body="",  # Changed from TEMPLATE_BODY to empty string
+            body="" if is_folder else TEMPLATE_BODY,
             parent_id=parent_id,
             representation="storage",
         )
@@ -795,41 +798,38 @@ class ConfluencePlugin(BasePlugin):
         indent = "  " * level
         for item in nav:
             if isinstance(item, str):
-                page_title = self._normalize_title(item)
-                page_path = self.resolve_page_path_by_title(page_title)
-
-                if page_path:
-                    log.info(
-                        f"{indent}✅ Appending page '{page_title}' with parent ID {parent_id}"
+                page_title = item
+                cache_key = self._cache_key(page_title, parent_id)
+                page_id = self.page_ids.get(cache_key) or self.find_or_create_page(
+                    page_title, parent_id, is_folder=False
+                )
+                if page_id:
+                    content_page = next(
+                        (p for p in self.pages if p["title"] == page_title), None
                     )
-                    self.add_page(page_title, page_path, parent_id)
+                    if content_page:
+                        self.publish_page(
+                            page_title, content_page["body"], parent_id=parent_id
+                        )
+                    else:
+                        log.warning(
+                            f"{indent}⚠️ Content for page '{page_title}' not found."
+                        )
                 else:
                     log.warning(
-                        f"{indent}⚠️ Could not resolve path for content page '{page_title}'"
+                        f"{indent}⚠️ Could not find or create page '{page_title}'."
                     )
             elif isinstance(item, dict):
                 for folder_title, children in item.items():
-                    folder_title_norm = self._normalize_title(folder_title)
-                    folder_id = self.find_page_id(folder_title_norm, parent_id)
-
-                    if not folder_id:
-                        log.info(
-                            f"{indent}📁 Creating folder page '{folder_title}' under parent ID {parent_id}"
-                        )
-                        folder_id = self.create_page(
-                            title=folder_title,
-                            body="",
-                            parent_id=parent_id,
-                            is_folder=True,
-                        )
-
-                    if not folder_id:
+                    folder_id = self.find_or_create_page(
+                        folder_title, parent_id, is_folder=True
+                    )
+                    if folder_id:
+                        self.build_and_publish_tree(children, folder_id, level + 1)
+                    else:
                         log.error(
                             f"{indent}❌ Failed to create/find folder page '{folder_title}'"
                         )
-                        continue
-
-                    self.build_and_publish_tree(children, folder_id, level + 1)
             else:
                 log.warning(f"{indent}⚠️ Unexpected nav item type: {item}")
 

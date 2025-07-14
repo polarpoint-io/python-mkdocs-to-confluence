@@ -129,9 +129,9 @@ def test_on_page_markdown_adds_header(plugin):
     page = DummyPage()
 
     result = plugin.on_page_markdown("# title", page, None, None)
-    assert result.startswith(
-        "[Update markdown](https://github.com/repo/docs/readme.md)"
-    )
+    expected_url = "[Update markdown](https://github.com/repo/docs%2Freadme.md)"
+    assert result.startswith(expected_url)
+
 
 
 def test_on_page_content_footer(plugin):
