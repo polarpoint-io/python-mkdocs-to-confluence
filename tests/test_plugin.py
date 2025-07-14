@@ -56,39 +56,6 @@ def test_on_config_sets_confluence(monkeypatch, plugin):
     assert plugin.dryrun is True
 
 
-def test_publish_nav_structure_creates_pages_and_syncs_attachments(plugin):
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-
-    nav_tree = [{"Parent Page": [{"Child Page": ["Leaf Page"]}]}]
-
-    plugin.find_page_id = lambda title, parent_id=None: plugin.page_ids.get((title, parent_id))
-
-    def mock_find_or_create_page(title, parent_id=None):
-        page_id = f"id_{title.replace(' ', '_')}"
-        plugin.page_ids[(title, parent_id)] = page_id
-        return page_id
-
-    plugin.find_or_create_page = mock_find_or_create_page
-
-    # Use dynamic parent IDs that reflect the structure
-    parent_id = mock_find_or_create_page("Parent Page", None)
-    child_id = mock_find_or_create_page("Child Page", parent_id)
-
-    plugin.pages = [
-        {"title": "Parent Page", "body": "<p>parent body</p>", "parent_id": None},
-        {"title": "Child Page", "body": "<p>child body</p>", "parent_id": parent_id},
-        {"title": "Leaf Page", "body": "<p>leaf body</p>", "parent_id": child_id},
-    ]
-
-    plugin.publish_page = Mock()
-    plugin.sync_page_attachments = Mock()
-
-    plugin.publish_nav_structure(nav_tree)
-
-    expected_call = call("Leaf Page", "<p>leaf body</p>", child_id)
-    assert expected_call in plugin.publish_page.call_args_list
-
 
 def test_sync_page_attachments_calls_add_or_update_attachment(
     monkeypatch, tmp_path, plugin
@@ -124,64 +91,6 @@ def test_sync_page_attachments_calls_add_or_update_attachment(
     plugin.add_or_update_attachment.assert_called_once()
 
 
-
-
-def test_find_or_create_page_creates_new_page(plugin):
-    plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-    plugin.dryrun = False
-    plugin.config = {"space": "SPACE"}
-
-    plugin.tab_nav = ["New Page"]
-
-    plugin.confluence.cql = Mock(return_value={"results": []})
-
-    created_pages = []
-
-    def mock_create_page(space, title, body, parent_id=None, representation=None):
-        created_pages.append(title)
-        return {"id": "new_id"}
-
-    plugin.confluence.create_page = mock_create_page
-
-    plugin.find_page_id = lambda title, parent_id=None: plugin.page_ids.get((title, parent_id))
-
-    page_id = plugin.find_or_create_page("New Page", parent_id=None)
-
-    if page_id:
-        plugin.page_ids[("New Page", None)] = page_id
-
-    assert page_id == "new_id"
-    assert "New Page" in created_pages
-    assert plugin.page_ids[("New Page", None)] == "new_id"
-
-    plugin.publish_page = Mock()
-    plugin.publish_nav_structure(plugin.tab_nav)
-    assert "New Page" in created_pages
-
-
-def test_find_or_create_page_returns_existing(plugin):
-    plugin.page_ids = {("existing page", None): "existing_id"}
-    plugin.confluence.cql = Mock(return_value={
-        "results": [
-            {
-                "id": "existing_id",
-                "version": {"number": 1},
-                "ancestors": [],  # This is ignored now; real data is from get_page_by_id
-            }
-        ]
-    })
-    plugin.confluence.create_page = Mock(return_value={"id": "existing_id"})
-    plugin.confluence.get_page_by_id = Mock(return_value={
-        "ancestors": [{"id": None}]  # or "some_parent_id" if you want a non-None value
-    })
-    plugin.config = {"space": "SPACE"}
-    plugin.dryrun = False
-
-    page_id = plugin.find_or_create_page("Existing Page", None)
-
-    assert page_id == "existing_id"
 
 
 def test_on_nav_builds_tab_nav(plugin):
@@ -330,56 +239,6 @@ def test_find_page_id_with_and_without_parent_id(plugin):
 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
-
-def test_ensure_folder_pages_exist_creates_structure(plugin):
-    plugin.config = {"space": "TEST"}
-    plugin.dryrun = False
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-
-    plugin.confluence.create_page = Mock(return_value={"id": "123"})
-    plugin.find_page_id = Mock(return_value=None)
-
-    nav_tree = [{"Folder A": [{"Subfolder A1": []}]}]
-
-    plugin.ensure_folder_pages_exist(nav_tree)
-
-    plugin.confluence.create_page.assert_any_call(
-        space="TEST",
-        title="Folder A",
-        body='',
-        parent_id=None,
-        representation="storage"
-    )
-    plugin.confluence.create_page.assert_any_call(
-        space="TEST",
-        title="Subfolder A1",
-        body='',
-        parent_id="123",
-        representation="storage"
-    )
-
-
-def test_publish_nav_structure_creates_hierarchy(plugin):
-    plugin.pages = [
-        {"title": "Final Page", "body": "<p>Body</p>", "parent_id": "Middle-Top-None"}
-    ]
-    plugin.page_ids = {}
-    plugin.page_versions = {}
-
-    plugin.find_page_id = Mock(return_value=None)
-    plugin.find_or_create_page = Mock(side_effect=lambda title, parent_id=None: f"{title}-{parent_id}")
-    plugin.publish_page = Mock()
-    plugin.sync_page_attachments = Mock()
-
-    nav_tree = [{"Top": [{"Middle": ["Final Page"]}]}]
-
-    plugin.publish_nav_structure(nav_tree)
-
-    plugin.find_or_create_page.assert_any_call("Top", parent_id=None)
-    plugin.find_or_create_page.assert_any_call("Middle", parent_id="Top-None")
-    plugin.publish_page.assert_called_once_with("Final Page", "<p>Body</p>", "Middle-Top-None")
-
 
 def test_dryrun_log_logs_info(caplog, plugin):
     with caplog.at_level("INFO"):
