@@ -138,6 +138,7 @@ def test_on_page_markdown_adds_header(plugin):
     )
 
 
+
 def test_on_page_content_footer(plugin):
     plugin.config = {
         "github_base_url": "https://github.com/repo",
@@ -149,13 +150,20 @@ def test_on_page_content_footer(plugin):
     }
     plugin.enabled = True
     plugin.only_in_nav = False
+    plugin.dryrun = False  # ✅ ensure real logic runs
 
     plugin.parent_page_id = "12345"
     plugin.page_ids = {}
     plugin.pages = []
 
+    plugin.page_parents = {
+        "Test": "Docs",
+        "Docs": None,
+    }
+
     plugin.confluence = Mock()
-    plugin.confluence.cql = Mock(return_value={"results": []})  # ✅ Fix
+    plugin.confluence.cql = Mock(return_value={"results": []})
+    plugin.confluence.create_page = Mock(return_value={"id": "99999"})
 
     class DummyFile:
         def __init__(self, src_path, src_uri):
@@ -172,9 +180,8 @@ def test_on_page_content_footer(plugin):
 
     updated_html = plugin.on_page_content(html, page, None, None)
 
-    assert "github.com/repo" in updated_html  # example check
-
-    
+    assert "github.com/repo/docs/test.md" in updated_html
+    assert "<a href=" in updated_html
 
 
 

@@ -286,8 +286,31 @@ class ConfluencePlugin(BasePlugin):
             return result
 
         nav_structure = flatten_tree(tree)
-        self.tab_nav = nav_structure  # 🛠️ Use nested structure directly
+        self.tab_nav = nav_structure  # Nested nav structure
+
+        # Build parent-child mapping from nav
+        self.page_parents = self._flatten_nav_with_parents(self.tab_nav)
+
         log.info(f"Auto-generated nested nav: {nav_structure}")
+
+    def _flatten_nav_with_parents(self, nav, parent=None):
+        result = {}
+        for item in nav:
+            if isinstance(item, str):
+                result[item] = parent
+            elif isinstance(item, dict):
+                for k, v in item.items():
+                    result[k] = parent
+                    result.update(self._flatten_nav_with_parents(v, parent=k))
+        return result
+
+    def _build_page_path(self, title):
+        path = [title]
+        parent = self.page_parents.get(title)
+        while parent:
+            path.insert(0, parent)
+            parent = self.page_parents.get(parent)
+        return " / ".join(path)
 
     def on_page_markdown(self, markdown, page: Page, config, files):
         if not hasattr(page, "file") or not page.file.src_path:
@@ -298,59 +321,59 @@ class ConfluencePlugin(BasePlugin):
         header = f"[Update markdown]({github_url})\n\n"
         return header + markdown
 
-    def on_page_content(self, html, page: Page, config, files):
-        if not self.enabled:
+
+    def on_page_content(self, html, page, config, files):
+        if not self.enabled or self.only_in_nav:
             return html
 
-        # Build the page path and convert to Confluence-style titles
-        page_path = page.file.src_path.replace("\\", "/").split("/")
-        if page_path[-1].endswith(".md"):
-            page_path[-1] = page_path[-1][:-3]
-        page_titles = [part.replace("_", " ").title() for part in page_path]
+        title = page.title
+        src_uri = page.file.src_uri
 
-        # Traverse to find the parent ID based on the folder hierarchy
-        parent_id = self.parent_page_id
-        for part in page_titles[:-1]:
-            lookup_key = (part, parent_id)
-            if lookup_key not in self.page_ids:
-                parent_id = self.find_page_id_or_global(part, parent_id)
+        parent_title = self.page_parents.get(title)
+        parent_id = None
+
+        if parent_title:
+            grandparent_title = self.page_parents.get(parent_title)
+            if grandparent_title:
+                grandparent_id = self.find_or_create_page(
+                    grandparent_title, self.parent_page_id
+                )
+                parent_id = self.find_or_create_page(parent_title, grandparent_id)
             else:
-                parent_id = self.page_ids[lookup_key]
-        log.info(f"✅ Appending page '{page_titles[-1]}' with parent ID {parent_id}")
+                parent_id = self.find_or_create_page(parent_title, self.parent_page_id)
+        else:
+            parent_id = self.parent_page_id
 
-        log.debug(
-            f"on_page_content: Adding '{page_titles[-1]}' with body length {len(html)}"
-        )
-
-        if html.strip() == TEMPLATE_BODY:
-            log.warning(
-                f"⚠️ HTML content for '{page_titles[-1]}' is TEMPLATE_BODY – check markdown rendering"
-            )
-
-        # Append the page with parent_id and real html body (do not replace with TEMPLATE_BODY)
         self.pages.append(
-            {"title": page_titles[-1], "body": html, "parent_id": parent_id}
+            {
+                "title": title,
+                "body": html,
+                "parent_id": parent_id,
+            }
         )
-        log.info(
-            f"✅ Appending content page: {page_titles[-1]} under parent ID: {parent_id} with body length: {len(html)}"
-        )
-        log.info(f"📄 Queued page for publish: {' / '.join(page_titles)}")
 
-        # Optional footer
-        if self.config.get("enable_footer", False):
-            relative_path = page.file.src_path
-            github_url = f"{self.config['github_base_url']}/{quote(relative_path)}"
-            footer_macro = f"""
-            <ac:structured-macro ac:name="info">
-                <ac:rich-text-body>
-                    <p style="font-size:small;">{MKDOCS_FOOTER}</p>
-                    <p style="font-size:small;">✏️ <a href="{github_url}">Edit this page on GitHub</a></p>
-                </ac:rich-text-body>
-            </ac:structured-macro>
-            """
-            html += footer_macro
+        self.sync_page_attachments(title, parent_id=parent_id)
+
+        log.info(f"📄 Queued page for publish: {self._build_page_path(title)}")
+
+        # ✅ Append GitHub footer if enabled
+        if (
+            self.config.get("enable_footer")
+            and self.config.get("github_base_url")
+            and not self.dryrun
+        ):
+            github_url = f"{self.config['github_base_url'].rstrip('/')}/{src_uri}"
+            footer = f'<p style="font-size:small;">View source on <a href="{github_url}">{github_url}</a></p>'
+            log.debug(f"Appending footer with GitHub URL: {github_url}")
+            html += footer
 
         return html
+
+
+    def debug_dump_page_parents(self):
+        print("🔍 Page parent mapping:")
+        for child, parent in self.page_parents.items():
+            print(f"  {child} ← {parent}")
 
     def on_post_build(self, config, **kwargs):
         if not self.enabled:
