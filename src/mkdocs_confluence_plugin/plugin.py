@@ -520,7 +520,7 @@ class ConfluencePlugin(BasePlugin):
                 log.error(f"❌ Failed to create page '{title}': {e}", exc_info=True)
                 return None
 
-        # If it failed, fallback to update
+        # Fallback to update if creation failed
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
             log.error(
@@ -795,7 +795,6 @@ class ConfluencePlugin(BasePlugin):
         indent = "  " * level
         for item in nav:
             if isinstance(item, str):
-                # This is a content page (leaf)
                 page_title = self._normalize_title(item)
                 page_path = self.resolve_page_path_by_title(page_title)
 
@@ -810,17 +809,16 @@ class ConfluencePlugin(BasePlugin):
                     )
             elif isinstance(item, dict):
                 for folder_title, children in item.items():
-                    folder_title = self._normalize_title(folder_title)
-                    folder_id = self.find_page_id(folder_title, parent_id)
+                    folder_title_norm = self._normalize_title(folder_title)
+                    folder_id = self.find_page_id(folder_title_norm, parent_id)
 
                     if not folder_id:
-                        # Create folder page with no content (or template)
                         log.info(
                             f"{indent}📁 Creating folder page '{folder_title}' under parent ID {parent_id}"
                         )
                         folder_id = self.create_page(
                             title=folder_title,
-                            body="",  # Empty or template body
+                            body="",
                             parent_id=parent_id,
                             is_folder=True,
                         )
@@ -831,13 +829,12 @@ class ConfluencePlugin(BasePlugin):
                         )
                         continue
 
-                    # Recurse into subpages
                     self.build_and_publish_tree(children, folder_id, level + 1)
             else:
                 log.warning(f"{indent}⚠️ Unexpected nav item type: {item}")
 
     def _cache_key(self, title: str, parent_id) -> tuple:
-        return (self._normalize_title(title), parent_id)
+        return (self._normalize_title(title), str(parent_id) if parent_id else None)
 
     def get_file_sha1(self, file_path):
         hash_sha1 = hashlib.sha1()

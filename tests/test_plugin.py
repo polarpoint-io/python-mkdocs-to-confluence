@@ -56,7 +56,6 @@ def test_on_config_sets_confluence(monkeypatch, plugin):
     assert plugin.dryrun is True
 
 
-
 def test_sync_page_attachments_calls_add_or_update_attachment(
     monkeypatch, tmp_path, plugin
 ):
@@ -91,8 +90,6 @@ def test_sync_page_attachments_calls_add_or_update_attachment(
     plugin.add_or_update_attachment.assert_called_once()
 
 
-
-
 def test_on_nav_builds_tab_nav(plugin):
     class DummyFile:
         def __init__(self, src_path):
@@ -118,7 +115,6 @@ def test_on_nav_builds_tab_nav(plugin):
     assert "Readme" in flat_nav
 
 
-
 def test_on_page_markdown_adds_header(plugin):
     plugin.config = {"github_base_url": "https://github.com/repo"}
 
@@ -138,7 +134,6 @@ def test_on_page_markdown_adds_header(plugin):
     )
 
 
-
 def test_on_page_content_footer(plugin):
     plugin.config = {
         "github_base_url": "https://github.com/repo",
@@ -146,7 +141,7 @@ def test_on_page_content_footer(plugin):
         "username": "user",
         "password": "pass",
         "space": "TEST",
-        "parent_page_name": "Docs"
+        "parent_page_name": "Docs",
     }
     plugin.enabled = True
     plugin.only_in_nav = False
@@ -182,7 +177,6 @@ def test_on_page_content_footer(plugin):
 
     assert "github.com/repo/docs/test.md" in updated_html
     assert "<a href=" in updated_html
-
 
 
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):
@@ -227,18 +221,20 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.on_post_build(config={}, files=[])
 
 
-
 def test_find_page_id_with_and_without_parent_id(plugin):
     plugin.config = {"space": "TEST"}
     mock_result = {
         "results": [
-            {"id": "123", "title": "Page A", "version": {"number": 3}, "ancestors": [{"id": "456"}]}
+            {
+                "id": "123",
+                "title": "Page A",
+                "version": {"number": 3},
+                "ancestors": [{"id": "456"}],
+            }
         ]
     }
     plugin.confluence.cql = Mock(return_value=mock_result)
-    plugin.confluence.get_page_by_id = Mock(return_value={
-        "ancestors": [{"id": "456"}]
-    })
+    plugin.confluence.get_page_by_id = Mock(return_value={"ancestors": [{"id": "456"}]})
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
 
@@ -247,14 +243,17 @@ def test_find_page_id_with_and_without_parent_id(plugin):
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 
+
 def test_dryrun_log_logs_info(caplog, plugin):
     with caplog.at_level("INFO"):
         plugin.dryrun_log("create", "Sample Page", parent_id="123")
     assert "DRYRUN: Would create page 'Sample Page' under parent ID 123" in caplog.text
 
+
 def test_normalize_title_strips_punctuation(plugin):
     assert plugin._normalize_title(" Page! Title. ") == "pagetitle"
     assert plugin._normalize_title("Another Page-Title!") == "anotherpagetitle"
+
 
 def test_clear_cached_page_info(plugin):
     plugin.page_ids = {("A", None): "123"}
@@ -263,11 +262,16 @@ def test_clear_cached_page_info(plugin):
     assert plugin.page_ids == {}
     assert plugin.page_versions == {}
 
+
 def test_get_page_url_returns_correct_url(plugin):
     plugin.config = {"host_url": "https://example.atlassian.net/wiki/rest/api/content"}
     plugin.page_ids = {("Test Page", None): "45678"}
     url = plugin.get_page_url("Test Page", parent_id=None)
-    assert url == "https://example.atlassian.net/wiki/rest/api/content/pages/viewpage.action?pageId=45678"
+    assert (
+        url
+        == "https://example.atlassian.net/wiki/rest/api/content/pages/viewpage.action?pageId=45678"
+    )
+
 
 def test_page_exists_returns_true_if_found(plugin):
     plugin.find_page_id = Mock(return_value="123")
@@ -275,8 +279,6 @@ def test_page_exists_returns_true_if_found(plugin):
 
     plugin.find_page_id = Mock(return_value=None)
     assert plugin.page_exists("Missing Page", parent_id=None) is False
-
-
 
 
 def test_get_file_sha1(tmp_path, plugin):
