@@ -721,6 +721,7 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
+
     def build_and_publish_tree(self, nav, parent_id):
         """
         Recursively publishes nav tree. Folder nodes get empty bodies, content nodes get markdown content.
@@ -731,18 +732,19 @@ class ConfluencePlugin(BasePlugin):
                 page = self.page_lookup.get(key)
 
                 if not page:
-                    log.warning(
-                        f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{key}')"
-                    )
+                    log.warning(f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{key}')")
                     continue
 
-                self.publish_page(
+                page_id = self.publish_page(
                     page_title=node,
                     body=page.get("content", ""),
                     parent_id=parent_id,
                     source_path=page.get("source_path"),
                     dryrun=self.dryrun,
                 )
+                if page_id:
+                    norm_parent_id = str(parent_id) if parent_id else None
+                    self.page_ids[(key, norm_parent_id)] = page_id
 
             elif isinstance(node, dict):
                 for folder_title, children in node.items():
@@ -754,12 +756,9 @@ class ConfluencePlugin(BasePlugin):
 
                     folder_id = self.page_ids.get(folder_cache_key)
                     if not folder_id:
-                        # Create folder if it doesn't exist
                         if self.dryrun:
-                            self.dryrun_log(
-                                "create folder page", folder_title, parent_id
-                            )
-                            folder_id = "dryrun-folder-id"
+                            self.dryrun_log("create folder page", folder_title, parent_id)
+                            folder_id = f"dryrun-folder-id-{folder_title}"
                         else:
                             folder_response = self.confluence.create_page(
                                 space=self.config["space"],
@@ -772,16 +771,14 @@ class ConfluencePlugin(BasePlugin):
                                 folder_id = folder_response["id"]
                                 self.page_ids[folder_cache_key] = folder_id
                                 self.page_versions[folder_cache_key] = 1
-                                log.info(
-                                    f"📁 Created folder page '{folder_title}' with ID {folder_id}"
-                                )
+                                log.info(f"📁 Created folder page '{folder_title}' with ID {folder_id}")
                             else:
-                                log.warning(
-                                    f"❌ Failed to create folder page '{folder_title}'"
-                                )
-                                continue  # Skip this branch if folder couldn't be created
+                                log.warning(f"❌ Failed to create folder page '{folder_title}'")
+                                continue  # skip this branch if folder creation failed
 
+                    # Recurse into children using folder ID as new parent
                     self.build_and_publish_tree(children, parent_id=folder_id)
+
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -792,35 +789,73 @@ class ConfluencePlugin(BasePlugin):
             f"Folder '{title}' not found. Creating it under parent ID {parent_id}"
         )
 
-        if self.dryrun:  # ✅ fixed dryrun check
+        if self.dryrun:
             self.dryrun_log(f"create folder", title, parent_id)
-            return None
+            return f"DUMMY_ID_{title}"  # return dummy ID to keep recursion safe
 
         return self.create_page(title, "", parent_id)
 
+
+
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
-        """
-        Publishes a content page to Confluence under the given parent ID.
-        """
-        log.info(
-            f"📄 Attempting to create page '{page_title}' under parent ID {parent_id}"
-        )
+        norm_title = self._normalize_title(page_title)
+        norm_parent_id = str(parent_id) if parent_id else None
+        cache_key = (norm_title, norm_parent_id)
+
         if dryrun:
             self.dryrun_log("publish page", page_title, parent_id)
-            return
+            return f"DUMMY_ID_{page_title}"
 
-        response = self.confluence.create_page(
-            space=self.config["space"],
-            title=page_title,
-            body=body,
-            parent_id=parent_id,
-            representation="storage",
-        )
+        # Try to create page first
+        try:
+            log.info(f"📄 Creating page '{page_title}' under parent ID {parent_id}")
+            result = self.confluence.create_page(
+                space=self.config["space"],
+                title=page_title,
+                body=body or "",
+                parent_id=parent_id,
+                representation="storage",
+            )
+            if result and "id" in result:
+                page_id = result["id"]
+                self.page_ids[cache_key] = page_id
+                self.page_versions[cache_key] = 1
+                log.info(f"✅ Created page '{page_title}' with ID {page_id}")
+                return page_id
+        except Exception as e:
+            if "already exists with the same TITLE" in str(e):
+                log.warning(f"⚠️ Page '{page_title}' already exists — attempting update")
+            else:
+                log.error(f"❌ Failed to create page '{page_title}': {e}", exc_info=True)
+                return None
 
-        if response and "id" in response:
-            log.info(f"✅ Created content page '{page_title}' with ID {response['id']}")
-        else:
-            log.warning(f"❌ Failed to create page '{page_title}'")
+        # Fallback: Update existing page
+        page_id = self.find_page_id(page_title, parent_id)
+        if not page_id:
+            log.error(f"❌ Cannot update '{page_title}': page ID not found")
+            return None
+
+        prev_version = self.page_versions.get(cache_key, 1)
+        new_version = prev_version + 1
+        try:
+            log.info(f"🔁 Updating page '{page_title}' (ID {page_id}) to version {new_version}")
+            self.confluence.update_page(
+                page_id=page_id,
+                title=page_title,
+                body=body or "",
+                parent_id=parent_id,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+            )
+            self.page_ids[cache_key] = page_id
+            self.page_versions[cache_key] = new_version
+            log.info(f"✅ Updated page '{page_title}' (version {new_version})")
+            return page_id
+        except Exception as e:
+            log.error(f"❌ Failed to update page '{page_title}' (ID {page_id}): {e}", exc_info=True)
+            return None
+
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
