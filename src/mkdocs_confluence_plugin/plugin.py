@@ -16,6 +16,7 @@ from mkdocs.config import config_options
 from mkdocs.plugins import BasePlugin
 from mkdocs.structure.nav import Navigation
 from mkdocs.structure.pages import Page
+from mkdocs_confluence_plugin.api import ConfluenceAPI
 from md2cf.confluence_renderer import ConfluenceRenderer
 from atlassian import Confluence
 from urllib.parse import quote_plus
@@ -81,7 +82,12 @@ class ConfluencePlugin(BasePlugin):
 
     def on_config(self, config):
         plugin_cfg = self.config
-
+        self.api = ConfluenceAPI(
+            url=self.config["host_url"],
+            username=self.config["username"],
+            token=self.config["password"],
+            space=self.config["space"],
+        )
         # ✅ Ensure .enabled and .only_in_nav are always defined
         self.enabled = plugin_cfg.get("enabled", True)
         self.only_in_nav = plugin_cfg.get("only_in_nav", False)
@@ -404,15 +410,15 @@ class ConfluencePlugin(BasePlugin):
     def page_exists(self, title, parent_id=None):
         return self.find_page_id(title, parent_id) is not None
 
-
     def _normalize_title(self, title: str) -> str:
         """
         Normalize title by lowercasing, removing punctuation, and stripping whitespace.
         Preserves letters and digits, removes spaces and all punctuation characters.
         """
         title = title.strip().lower()
-        return title.translate(str.maketrans('', '', string.punctuation)).replace(" ", "")
-        
+        return title.translate(str.maketrans("", "", string.punctuation)).replace(
+            " ", ""
+        )
 
     def create_page(self, title, body, parent_id, is_folder=False):
         norm_title = self._normalize_title(title)
@@ -722,7 +728,6 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-
     def build_and_publish_tree(self, nav, parent_id):
         """
         Recursively publishes nav tree. Folder nodes get empty bodies, content nodes get markdown content.
@@ -733,7 +738,9 @@ class ConfluencePlugin(BasePlugin):
                 page = self.page_lookup.get(key)
 
                 if not page:
-                    log.warning(f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{key}')")
+                    log.warning(
+                        f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{key}')"
+                    )
                     continue
 
                 self.publish_page(
@@ -752,25 +759,30 @@ class ConfluencePlugin(BasePlugin):
                     if not folder_id:
                         # Create folder if it doesn't exist
                         if self.dryrun:
-                            self.dryrun_log(f"[DRY RUN] Would create folder page: {folder_title}")
+                            self.dryrun_log(
+                                f"[DRY RUN] Would create folder page: {folder_title}"
+                            )
                             folder_id = "dryrun-folder-id"
                         else:
                             folder_response = self.api.create_page(
                                 space=self.space,
                                 title=folder_title,
                                 body="",  # folders have no body
-                                parent_id=parent_id
+                                parent_id=parent_id,
                             )
                             if folder_response:
                                 folder_id = folder_response["id"]
                                 self.page_ids[folder_key] = folder_id
-                                log.info(f"📁 Created folder page '{folder_title}' with ID {folder_id}")
+                                log.info(
+                                    f"📁 Created folder page '{folder_title}' with ID {folder_id}"
+                                )
                             else:
-                                log.warning(f"❌ Failed to create folder page '{folder_title}'")
+                                log.warning(
+                                    f"❌ Failed to create folder page '{folder_title}'"
+                                )
                                 continue  # Skip this branch if folder couldn't be created
 
                     self.build_and_publish_tree(children, parent_id=folder_id)
-
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -787,28 +799,25 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         """
         Publishes a content page to Confluence under the given parent ID.
         """
-        log.info(f"📄 Attempting to create page '{page_title}' under parent ID {parent_id}")
+        log.info(
+            f"📄 Attempting to create page '{page_title}' under parent ID {parent_id}"
+        )
         if dryrun:
             self.dryrun_log(f"[DRY RUN] Would publish page: {page_title}")
             return
 
         response = self.api.create_page(
-            space=self.space,
-            title=page_title,
-            body=body,
-            parent_id=parent_id
+            space=self.space, title=page_title, body=body, parent_id=parent_id
         )
 
         if response:
             log.info(f"✅ Created content page '{page_title}' with ID {response['id']}")
         else:
             log.warning(f"❌ Failed to create page '{page_title}'")
-
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
