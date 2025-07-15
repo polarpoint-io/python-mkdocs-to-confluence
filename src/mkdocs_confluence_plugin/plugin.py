@@ -745,60 +745,45 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def create_or_update_page(
-        self, title: str, body: str, parent_id: str | None = None
-    ) -> str | None:
-        norm_title = self._normalize_title(title)
-        norm_parent_id = str(parent_id) if parent_id else None
-        cache_key = (norm_title, norm_parent_id)
-
-        if self.dryrun:
-            self.dryrun_log("create or update page", title, parent_id)
-            dummy_id = f"DUMMY_ID_{title}"
-            self.page_ids[cache_key] = dummy_id
-            return dummy_id
-
-        page_id = self.find_page_id(title, parent_id)
-
+    def create_or_update_page(self, title, body, parent_id):
+        """
+        Create or update a Confluence page under the given parent_id.
+        Returns the ID of the created or updated page.
+        """
         try:
-            if page_id:
-                current_page = self.confluence.get_page_by_id(page_id, expand="version")
-                current_version = current_page["version"]["number"]
-                new_version = current_version + 1
+            existing_page_id = self.find_page_id(title, parent_id)
+            if existing_page_id:
+                if self.dryrun:
+                    self.dryrun_log(f"[DRY RUN] Would update page '{title}'")
+                    return existing_page_id
+
+                self.logger.info(f"Updating page '{title}' (ID: {existing_page_id})")
                 self.confluence.update_page(
-                    page_id=page_id,
-                    title=title,
-                    body=body,
-                    parent_id=parent_id,
-                    minor_edit=False,
-                    update_message="Updated by mkdocs-confluence-plugin",
-                )
-                self.logger.info(f"Updated page '{title}' (ID: {page_id})")
-            else:
-                result = self.confluence.create_page(
-                    space=self.config["space"],
+                    page_id=existing_page_id,
                     title=title,
                     body=body,
                     parent_id=parent_id,
                 )
-                page_id = result.get("id") if result else None
-                if page_id:
-                    self.logger.info(f"Created page '{title}' (ID: {page_id})")
-                else:
-                    self.logger.error(
-                        f"Failed to create page '{title}' - no ID returned"
-                    )
-                    return None
-
-            self.page_ids[cache_key] = page_id
-            self.page_versions[cache_key] = self.page_versions.get(cache_key, 0) + 1
-            return page_id
-
+                return existing_page_id
         except Exception as e:
             self.logger.error(
                 f"Exception while creating/updating page '{title}': {e}", exc_info=True
             )
-            return None
+
+        if self.dryrun:
+            self.dryrun_log(
+                f"[DRY RUN] Would create page '{title}' under parent ID {parent_id}"
+            )
+            return -1
+
+        self.logger.info(f"Creating page '{title}' under parent ID {parent_id}")
+        page_id = self.confluence.create_page(
+            space=self.space,
+            title=title,
+            body=body,
+            parent_id=parent_id,
+        )
+        return page_id
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)

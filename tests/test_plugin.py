@@ -13,12 +13,14 @@ from mkdocs_confluence_plugin.plugin import ConfluencePlugin
 
 
 @pytest.fixture
+
 def plugin():
     p = ConfluencePlugin()
     p.config = {
         "space": "SPACE",
         "parent_page_name": None,
     }
+    p.space = p.config["space"]  
     p.page_ids = {}
     p.page_versions = {}
     p.pages = []
@@ -183,7 +185,6 @@ def test_on_page_content_footer(plugin):
     assert "<a href=" in updated_html
 
 
-
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.enabled = True
     plugin.config = {
@@ -194,6 +195,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
         "username": "user",
         "password": "pass",
     }
+    plugin.space = plugin.config["space"]  # use `space` here as well
 
     plugin.parent_page_id = None
 
@@ -210,20 +212,17 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
             self.updated_pages.append((title, version))
             return True
 
-        def cql(self, query, limit=10):  # ✅ Fixed: support limit param
+        def cql(self, query, limit=10):
             return {}
 
     plugin.confluence = DummyConfluence()
-
-    # ✅ Add a mock logger to avoid AttributeError
     plugin.log = Mock()
+    plugin.logger = plugin.log  # ensure logger exists
 
     plugin.page_ids = {}
     plugin.page_versions = {}
     plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
-
     plugin.tab_nav = ["New Page"]
-
     plugin.page_lookup = {
         "New Page": {
             "title": "New Page",
@@ -237,6 +236,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.sync_page_attachments = Mock()
 
     plugin.on_post_build(config={}, files=[])
+
 
 
 
