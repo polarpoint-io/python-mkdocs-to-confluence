@@ -133,7 +133,6 @@ def test_on_page_markdown_adds_header(plugin):
     assert result.startswith(expected_url)
 
 
-
 def test_on_page_content_footer(plugin):
     plugin.config = {
         "github_base_url": "https://github.com/repo",
@@ -190,7 +189,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
         "password": "pass",
     }
 
-    plugin.parent_page_id = None  # Add this line
+    plugin.parent_page_id = None
 
     class DummyConfluence:
         def __init__(self):
@@ -215,6 +214,17 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
 
     plugin.tab_nav = ["New Page"]
+
+    # ✅ This is the missing piece
+    plugin.page_lookup = {
+        "New Page": {
+            "title": "New Page",
+            "content": "<p>body</p>",
+            "parent_id": None,
+            "source_path": "docs/new_page.md",
+        }
+    }
+
     plugin.publish_page = Mock()
     plugin.sync_page_attachments = Mock()
 

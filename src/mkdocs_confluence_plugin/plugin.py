@@ -67,6 +67,7 @@ class ConfluencePlugin(BasePlugin):
     )
 
     def __init__(self):
+        self.page_lookup = {}
         self.enabled = True
         self.logger = log
         self.confluence_renderer = ConfluenceRenderer(use_xhtml=True)
@@ -348,19 +349,16 @@ class ConfluencePlugin(BasePlugin):
         else:
             parent_id = self.parent_page_id
 
-        self.pages.append(
-            {
-                "title": title,
-                "body": html,
-                "parent_id": parent_id,
-            }
-        )
-
-        self.sync_page_attachments(title, parent_id=parent_id)
+        # ✅ Save into self.page_lookup (used for final publishing)
+        self.page_lookup[title] = {
+            "title": title,
+            "content": html,
+            "parent_id": parent_id,
+            "source_path": page.file.src_uri,
+        }
 
         log.info(f"📄 Queued page for publish: {self._build_page_path(title)}")
 
-        # ✅ Append GitHub footer if enabled
         if (
             self.config.get("enable_footer")
             and self.config.get("github_base_url")
@@ -368,7 +366,6 @@ class ConfluencePlugin(BasePlugin):
         ):
             github_url = f"{self.config['github_base_url'].rstrip('/')}/{src_uri}"
             footer = f'<p style="font-size:small;">View source on <a href="{github_url}">{github_url}</a></p>'
-            log.debug(f"Appending footer with GitHub URL: {github_url}")
             html += footer
 
         return html
@@ -726,23 +723,29 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-    def build_and_publish_tree(self, nav, parent_id, parent_path=""):
-        """
-        Recursively walk nav structure and publish each page or create folder pages.
-        """
-        for item in nav:
-            if isinstance(item, str):
-                continue  # unlikely, but skip if malformed
+    def build_and_publish_tree(self, nav, parent_id=None):
+        for node in nav:
+            if isinstance(node, str):
+                # Leaf page
+                page = self.page_lookup[node]
+                page_body = page["content"] if "content" in page else ""
+                self.publish_page(
+                    title=page["title"],
+                    body=page_body,
+                    parent_id=parent_id,
+                    source_path=page["source_path"],
+                )
 
-            if isinstance(item, dict):
-                for title, children in item.items():
-                    # Folder node
-                    folder_page_id = self.find_or_create_folder_page(title, parent_id)
-                    full_path = f"{parent_path}/{title}".lstrip("/")
-                    self.build_and_publish_tree(children, folder_page_id, full_path)
-            elif hasattr(item, "title") and hasattr(item, "file") and item.file:
-                # Content page (markdown)
-                self.publish_page(item, parent_id)
+            elif isinstance(node, dict):
+                for section_title, children in node.items():
+                    # Create folder page for section
+                    folder_id = self.create_page(
+                        title=section_title,
+                        body="",  # Explicitly empty for folders
+                        parent_id=parent_id,
+                    )
+                    # Recursively process children under this folder
+                    self.build_and_publish_tree(children, parent_id=folder_id)
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -759,47 +762,49 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def publish_page(self, page, parent_id):
-        title = page.title
-        norm_title = self._normalize_title(title)
-        content = page.markdown.strip()
-
-        content = self.on_page_markdown(content, page, None, None)
-
-        if not content:
-            log.warning(f"Skipping page '{title}' — empty content")
-            return
-
-        page_id = self.find_page_id(title, parent_id)
+    def publish_page(self, page_data):
+        title = page_data["title"]
+        body = page_data["content"]
+        parent_id = page_data["parent_id"]
+        source_path = page_data.get("source_path")
 
         if self.dryrun:
             self.dryrun_log("publish", title, parent_id)
             return
 
-        if page_id:
-            log.info(
-                f"Updating page '{title}' (ID {page_id}) under parent ID {parent_id}"
-            )
-            self.update_page(page_id, title, content)
-        else:
-            log.info(f"Creating page '{title}' under parent ID {parent_id}")
-            self.create_page(title, content, parent_id)
-
-        # Determine if page exists under the parent
+        # First, try to find page
         page_id = self.find_page_id(title, parent_id)
 
-        if self.config.get("dryrun"):
-            self.dryrun_log(f"Would publish page '{title}' under parent ID {parent_id}")
+        if not body.strip():
+            log.warning(f"⚠️ Skipping publish of empty page '{title}'")
             return
 
         if page_id:
-            self.logger.info(
-                f"Updating page '{title}' (ID {page_id}) under parent ID {parent_id}"
+            log.info(
+                f"🔁 Updating page '{title}' (ID {page_id}) under parent ID {parent_id}"
             )
-            self.update_page(page_id, title, content)
+            self.confluence.update_page(
+                page_id=page_id,
+                title=title,
+                body=body,
+                parent_id=parent_id,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+            )
         else:
-            self.logger.info(f"Creating page '{title}' under parent ID {parent_id}")
-            self.create_page(title, content, parent_id)
+            log.info(f"📄 Creating new page '{title}' under parent ID {parent_id}")
+            result = self.confluence.create_page(
+                space=self.config["space"],
+                title=title,
+                body=body,
+                parent_id=parent_id,
+                representation="storage",
+            )
+            if result and "id" in result:
+                log.info(f"✅ Successfully created page '{title}' (ID {result['id']})")
+            else:
+                log.error(f"❌ Failed to create page '{title}'")
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
