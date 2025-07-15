@@ -120,17 +120,21 @@ def test_on_page_markdown_adds_header(plugin):
 
     class DummyFile:
         def __init__(self, src_path):
-            self.src_path = src_path
+            self.abs_src_path = src_path
 
     class DummyPage:
         def __init__(self):
+            self.title = "README"
             self.file = DummyFile("docs/readme.md")
 
     page = DummyPage()
+    markdown = "# title"
 
-    result = plugin.on_page_markdown("# title", page, None, None)
-    expected_url = "[Update markdown](https://github.com/repo/docs%2Freadme.md)"
-    assert result.startswith(expected_url)
+    result = plugin.on_page_markdown(markdown, page, None, None)
+
+    assert result == markdown
+    assert "README" in plugin.page_lookup
+
 
 
 def test_on_page_content_footer(plugin):
@@ -163,18 +167,20 @@ def test_on_page_content_footer(plugin):
         def __init__(self, src_path, src_uri):
             self.src_path = src_path
             self.src_uri = src_uri
+            self.abs_src_path = src_path
 
     class DummyPage:
         def __init__(self):
-            self.title = "Test"
-            self.file = DummyFile("docs/test.md", "docs/test.md")
+            self.title = "README"
+            self.file = DummyFile("docs/readme.md", "docs/readme.md")
+
 
     page = DummyPage()
     html = "<p>content</p>"
 
     updated_html = plugin.on_page_content(html, page, None, None)
 
-    assert "github.com/repo/docs/test.md" in updated_html
+    assert "github.com/repo/docs/readme.md" in updated_html
     assert "<a href=" in updated_html
 
 

@@ -318,57 +318,41 @@ class ConfluencePlugin(BasePlugin):
             parent = self.page_parents.get(parent)
         return " / ".join(path)
 
-    def on_page_markdown(self, markdown, page: Page, config, files):
-        if not hasattr(page, "file") or not page.file.src_path:
-            return markdown
-
-        relative_path = page.file.src_path
-        github_url = f"{self.config['github_base_url']}/{quote_plus(relative_path)}"
-        header = f"[Update markdown]({github_url})\n\n"
-        return header + markdown
-
-    def on_page_content(self, html, page, config, files):
-        if not self.enabled or self.only_in_nav:
-            return html
-
+    def on_page_markdown(self, markdown, page, config, files):
         title = page.title
-        src_uri = page.file.src_uri
+        source_path = page.file.abs_src_path
 
-        parent_title = self.page_parents.get(title)
-        parent_id = None
+        self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
 
-        if parent_title:
-            grandparent_title = self.page_parents.get(parent_title)
-            if grandparent_title:
-                grandparent_id = self.find_or_create_page(
-                    grandparent_title, self.parent_page_id
-                )
-                parent_id = self.find_or_create_page(parent_title, grandparent_id)
-            else:
-                parent_id = self.find_or_create_page(parent_title, self.parent_page_id)
-        else:
-            parent_id = self.parent_page_id
-
-        # ✅ Save into self.page_lookup (used for final publishing)
         self.page_lookup[title] = {
             "title": title,
-            "content": html,
-            "parent_id": parent_id,
-            "source_path": page.file.src_uri,
+            "content": markdown,  # or rendered HTML if post-processing
+            "parent_id": None,
+            "source_path": source_path,
         }
 
-        log.info(f"📄 Queued page for publish: {self._build_page_path(title)}")
+        return markdown
 
-        if (
-            self.config.get("enable_footer")
-            and self.config.get("github_base_url")
-            and not self.dryrun
-        ):
-            github_url = f"{self.config['github_base_url'].rstrip('/')}/{src_uri}"
-            footer = f'<p style="font-size:small;">View source on <a href="{github_url}">{github_url}</a></p>'
-            html += footer
+    def on_page_content(self, html, page, config, files):
+        print("🧪 on_page_content called")
 
-        return html
+        if not self.config.get("enable_footer"):
+            print("🚫 Footer disabled")
+            return html
+
+        github_base_url = self.config.get("github_base_url")
+        if not github_base_url:
+            print("⚠️  Missing github_base_url")
+            return html
+
+        if not hasattr(page.file, "src_uri"):
+            print("❌ No src_uri on page.file")
+            return html
+
+        footer = f"\n<p><em><a href=\"{github_base_url}/{page.file.src_uri}\">View source on GitHub</a></em></p>\n"
+        print(f"✅ Adding footer: {footer.strip()}")
+        return html + footer
+
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
