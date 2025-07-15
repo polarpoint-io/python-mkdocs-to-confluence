@@ -747,25 +747,31 @@ class ConfluencePlugin(BasePlugin):
             elif isinstance(node, dict):
                 for folder_title, children in node.items():
                     folder_key = self._normalize_title(folder_title)
+                    folder_cache_key = (
+                        folder_key,
+                        str(parent_id) if parent_id else None,
+                    )
 
-                    folder_id = self.page_ids.get(folder_key)
+                    folder_id = self.page_ids.get(folder_cache_key)
                     if not folder_id:
                         # Create folder if it doesn't exist
                         if self.dryrun:
                             self.dryrun_log(
-                                f"[DRY RUN] Would create folder page: {folder_title}"
+                                "create folder page", folder_title, parent_id
                             )
                             folder_id = "dryrun-folder-id"
                         else:
-                            folder_response = self.api.create_page(
-                                space=self.space,
+                            folder_response = self.confluence.create_page(
+                                space=self.config["space"],
                                 title=folder_title,
                                 body="",  # folders have no body
                                 parent_id=parent_id,
+                                representation="storage",
                             )
-                            if folder_response:
+                            if folder_response and "id" in folder_response:
                                 folder_id = folder_response["id"]
-                                self.page_ids[folder_key] = folder_id
+                                self.page_ids[folder_cache_key] = folder_id
+                                self.page_versions[folder_cache_key] = 1
                                 log.info(
                                     f"📁 Created folder page '{folder_title}' with ID {folder_id}"
                                 )
@@ -800,14 +806,18 @@ class ConfluencePlugin(BasePlugin):
             f"📄 Attempting to create page '{page_title}' under parent ID {parent_id}"
         )
         if dryrun:
-            self.dryrun_log(f"[DRY RUN] Would publish page: {page_title}")
+            self.dryrun_log("publish page", page_title, parent_id)
             return
 
-        response = self.api.create_page(
-            space=self.space, title=page_title, body=body, parent_id=parent_id
+        response = self.confluence.create_page(
+            space=self.config["space"],
+            title=page_title,
+            body=body,
+            parent_id=parent_id,
+            representation="storage",
         )
 
-        if response:
+        if response and "id" in response:
             log.info(f"✅ Created content page '{page_title}' with ID {response['id']}")
         else:
             log.warning(f"❌ Failed to create page '{page_title}'")
