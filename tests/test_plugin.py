@@ -183,6 +183,7 @@ def test_on_page_content_footer(plugin):
     assert "<a href=" in updated_html
 
 
+
 def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.enabled = True
     plugin.config = {
@@ -209,10 +210,13 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
             self.updated_pages.append((title, version))
             return True
 
-        def cql(self, query):
+        def cql(self, query, limit=10):  # ✅ Fixed: support limit param
             return {}
 
     plugin.confluence = DummyConfluence()
+
+    # ✅ Add a mock logger to avoid AttributeError
+    plugin.log = Mock()
 
     plugin.page_ids = {}
     plugin.page_versions = {}
@@ -220,7 +224,6 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
 
     plugin.tab_nav = ["New Page"]
 
-    # ✅ This is the missing piece
     plugin.page_lookup = {
         "New Page": {
             "title": "New Page",
@@ -236,24 +239,35 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.on_post_build(config={}, files=[])
 
 
+
+
 def test_find_page_id_with_and_without_parent_id(plugin):
     plugin.config = {"space": "TEST"}
+    plugin.log = Mock()
+    plugin._normalize_title = lambda t: t.lower().replace(" ", "")
+
+    plugin.page_ids = {}
+
     mock_result = {
         "results": [
             {
-                "id": "123",
-                "title": "Page A",
-                "version": {"number": 3},
-                "ancestors": [{"id": "456"}],
+                "content": {
+                    "id": "123",
+                    "title": "Page A",
+                    "version": {"number": 3},
+                    "ancestors": [{"id": "111"}, {"id": "222"}, {"id": "456"}],
+                }
             }
         ]
     }
+
     plugin.confluence.cql = Mock(return_value=mock_result)
-    plugin.confluence.get_page_by_id = Mock(return_value={"ancestors": [{"id": "456"}]})
+    plugin.confluence.get_page_by_id = Mock()
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
 
     assert page_id == "123"
+
 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
