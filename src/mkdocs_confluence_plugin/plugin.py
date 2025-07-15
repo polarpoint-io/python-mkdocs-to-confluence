@@ -713,12 +713,13 @@ class ConfluencePlugin(BasePlugin):
                 # Leaf page
                 page = self.page_lookup[node]
                 page_body = page["content"] if "content" in page else ""
-                self.publish_page(
-                    title=page["title"],
-                    body=page_body,
-                    parent_id=parent_id,
-                    source_path=page["source_path"],
-                )
+                self.publish_page({
+                    "title": page["title"],
+                    "content": page_body,
+                    "parent_id": parent_id,
+                    "source_path": page["source_path"],
+                })
+
 
             elif isinstance(node, dict):
                 for section_title, children in node.items():
@@ -746,11 +747,24 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
+
     def publish_page(self, page_data):
-        title = page_data["title"]
-        body = page_data["content"]
-        parent_id = page_data["parent_id"]
+        if not isinstance(page_data, dict):
+            log.error("❌ Invalid input to publish_page(): expected a dict")
+            return
+
+        title = page_data.get("title")
+        body = page_data.get("content", "")
+        parent_id = page_data.get("parent_id")
         source_path = page_data.get("source_path")
+
+        if not title:
+            log.error("❌ Cannot publish page: 'title' is missing in page_data")
+            return
+
+        if not body.strip():
+            log.warning(f"⚠️ Skipping publish of empty page '{title}'")
+            return
 
         if self.dryrun:
             self.dryrun_log("publish", title, parent_id)
@@ -759,36 +773,40 @@ class ConfluencePlugin(BasePlugin):
         # First, try to find page
         page_id = self.find_page_id(title, parent_id)
 
-        if not body.strip():
-            log.warning(f"⚠️ Skipping publish of empty page '{title}'")
-            return
-
         if page_id:
             log.info(
                 f"🔁 Updating page '{title}' (ID {page_id}) under parent ID {parent_id}"
             )
-            self.confluence.update_page(
-                page_id=page_id,
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                type="page",
-                representation="storage",
-                minor_edit=False,
-            )
+            try:
+                self.confluence.update_page(
+                    page_id=page_id,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    type="page",
+                    representation="storage",
+                    minor_edit=False,
+                )
+                log.info(f"✅ Updated page '{title}' (ID {page_id})")
+            except Exception as e:
+                log.error(f"❌ Failed to update page '{title}': {e}", exc_info=True)
         else:
             log.info(f"📄 Creating new page '{title}' under parent ID {parent_id}")
-            result = self.confluence.create_page(
-                space=self.config["space"],
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                representation="storage",
-            )
-            if result and "id" in result:
-                log.info(f"✅ Successfully created page '{title}' (ID {result['id']})")
-            else:
-                log.error(f"❌ Failed to create page '{title}'")
+            try:
+                result = self.confluence.create_page(
+                    space=self.config["space"],
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    representation="storage",
+                )
+                if result and "id" in result:
+                    log.info(f"✅ Successfully created page '{title}' (ID {result['id']})")
+                else:
+                    log.error(f"❌ Failed to create page '{title}'")
+            except Exception as e:
+                log.error(f"❌ Exception during create_page for '{title}': {e}", exc_info=True)
+
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
