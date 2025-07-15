@@ -81,7 +81,7 @@ class ConfluencePlugin(BasePlugin):
 
     def on_config(self, config):
         plugin_cfg = self.config
-        # ✅ Ensure .enabled and .only_in_nav are always defined
+        self.space = self.config.get("space") 
         self.enabled = plugin_cfg.get("enabled", True)
         self.only_in_nav = plugin_cfg.get("only_in_nav", False)
 
