@@ -715,7 +715,7 @@ class ConfluencePlugin(BasePlugin):
                 # Find if page already exists under this parent
                 page_id = self.find_page_id(page_title, parent_id)
                 if page_id:
-                    self.log.info(
+                    self.logger.info(
                         f"Page '{page_title}' already exists with ID {page_id}"
                     )
                     # Optionally update the page content here
@@ -730,7 +730,7 @@ class ConfluencePlugin(BasePlugin):
                         representation="storage",
                     )
                     page_id = response["id"]
-                    self.log.info(f"Created page '{page_title}' with ID {page_id}")
+                    self.logger.info(f"Created page '{page_title}' with ID {page_id}")
 
                 # Cache the page id
                 self.page_ids[(normalized_title, parent_id)] = page_id
@@ -743,7 +743,7 @@ class ConfluencePlugin(BasePlugin):
                     # Find or create folder page
                     folder_id = self.find_page_id(folder_title, parent_id)
                     if folder_id:
-                        self.log.info(
+                        self.logger.info(
                             f"Folder page '{folder_title}' already exists with ID {folder_id}"
                         )
                     else:
@@ -755,7 +755,7 @@ class ConfluencePlugin(BasePlugin):
                             representation="storage",
                         )
                         folder_id = response["id"]
-                        self.log.info(
+                        self.logger.info(
                             f"Created folder page '{folder_title}' with ID {folder_id}"
                         )
 
