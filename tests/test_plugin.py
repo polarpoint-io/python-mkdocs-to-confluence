@@ -264,10 +264,15 @@ def test_find_page_id_with_and_without_parent_id(plugin):
     plugin.confluence.cql = Mock(return_value=mock_result)
     plugin.confluence.get_page_by_id = Mock()
 
+    # <-- Fix: mock get_page_child_by_type to return a list (iterable) to avoid TypeError
+    plugin.confluence.get_page_child_by_type = Mock(return_value=[
+        {"id": "123", "title": "Page A"},
+        {"id": "124", "title": "Other Page"},
+    ])
+
     page_id = plugin.find_page_id("Page A", parent_id="456")
 
     assert page_id == "123"
-
 
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
