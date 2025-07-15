@@ -16,7 +16,6 @@ from mkdocs.config import config_options
 from mkdocs.plugins import BasePlugin
 from mkdocs.structure.nav import Navigation
 from mkdocs.structure.pages import Page
-from mkdocs_confluence_plugin.api import ConfluenceAPI
 from md2cf.confluence_renderer import ConfluenceRenderer
 from atlassian import Confluence
 from urllib.parse import quote_plus
@@ -82,12 +81,6 @@ class ConfluencePlugin(BasePlugin):
 
     def on_config(self, config):
         plugin_cfg = self.config
-        self.api = ConfluenceAPI(
-            url=self.config["host_url"],
-            username=self.config["username"],
-            token=self.config["password"],
-            space=self.config["space"],
-        )
         # ✅ Ensure .enabled and .only_in_nav are always defined
         self.enabled = plugin_cfg.get("enabled", True)
         self.only_in_nav = plugin_cfg.get("only_in_nav", False)
