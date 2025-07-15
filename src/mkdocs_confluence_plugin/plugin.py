@@ -321,12 +321,15 @@ class ConfluencePlugin(BasePlugin):
     def on_page_markdown(self, markdown, page, config, files):
         title = page.title
         source_path = page.file.abs_src_path
+        norm_title = self._normalize_title(title)
 
-        self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
+        self.logger.debug(
+            f"📄 Adding page to lookup: '{title}' (normalized: '{norm_title}') from '{source_path}'"
+        )
 
-        self.page_lookup[title] = {
+        self.page_lookup[norm_title] = {
             "title": title,
-            "content": markdown,  # or rendered HTML if post-processing
+            "content": markdown,
             "parent_id": None,
             "source_path": source_path,
         }
@@ -349,10 +352,9 @@ class ConfluencePlugin(BasePlugin):
             print("❌ No src_uri on page.file")
             return html
 
-        footer = f"\n<p><em><a href=\"{github_base_url}/{page.file.src_uri}\">View source on GitHub</a></em></p>\n"
+        footer = f'\n<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>\n'
         print(f"✅ Adding footer: {footer.strip()}")
         return html + footer
-
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
@@ -367,9 +369,16 @@ class ConfluencePlugin(BasePlugin):
         log.info(f"🔁 Nav structure for folder pages creation:\n{self.tab_nav}")
         self.debug_dump_pages()
 
+        # 💡 Optional: Dump the page_lookup keys for debugging
+        log.debug(f"📄 Keys in page_lookup: {list(self.page_lookup.keys())}")
+
+        # 🧩 Populate self.pages based on page_lookup
+        self.pages = list(self.page_lookup.values())
+
         log.info(f"📄 Total pages defined in MkDocs: {len(self.pages)}")
+
         published_titles = [
-            self._normalize_title(p["title"]) for p in self.pages if p.get("body")
+            self._normalize_title(p["title"]) for p in self.pages if p.get("content")
         ]
         all_nav_titles = [
             self._normalize_title(n) for n in self._collect_all_page_names(self.tab_nav)
@@ -381,7 +390,7 @@ class ConfluencePlugin(BasePlugin):
                 f"🚨 These pages have content but were not matched in nav: {missing}"
             )
 
-        # ✅ Optional: Publish content pages via structured tree
+        # ✅ Publish content pages via structured tree
         self.build_and_publish_tree(self.tab_nav, self.parent_page_id)
 
     def get_page_url(self, title, parent_id=None):
@@ -710,26 +719,29 @@ class ConfluencePlugin(BasePlugin):
     def build_and_publish_tree(self, nav, parent_id=None):
         for node in nav:
             if isinstance(node, str):
-                # Leaf page
-                page = self.page_lookup[node]
-                page_body = page["content"] if "content" in page else ""
-                self.publish_page({
-                    "title": page["title"],
-                    "content": page_body,
-                    "parent_id": parent_id,
-                    "source_path": page["source_path"],
-                })
+                norm_node = self._normalize_title(node)
+                if norm_node not in self.page_lookup:
+                    log.warning(
+                        f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{norm_node}')"
+                    )
+                    continue
 
+                page = self.page_lookup[norm_node]
+                page_body = page["content"]
+                self.publish_page(
+                    title=page["title"],
+                    body=page_body,
+                    parent_id=parent_id,
+                    source_path=page["source_path"],
+                )
 
             elif isinstance(node, dict):
                 for section_title, children in node.items():
-                    # Create folder page for section
                     folder_id = self.create_page(
                         title=section_title,
                         body="",  # Explicitly empty for folders
                         parent_id=parent_id,
                     )
-                    # Recursively process children under this folder
                     self.build_and_publish_tree(children, parent_id=folder_id)
 
     def find_or_create_folder_page(self, title, parent_id):
@@ -746,7 +758,6 @@ class ConfluencePlugin(BasePlugin):
             return None
 
         return self.create_page(title, "", parent_id)
-
 
     def publish_page(self, page_data):
         if not isinstance(page_data, dict):
@@ -801,12 +812,15 @@ class ConfluencePlugin(BasePlugin):
                     representation="storage",
                 )
                 if result and "id" in result:
-                    log.info(f"✅ Successfully created page '{title}' (ID {result['id']})")
+                    log.info(
+                        f"✅ Successfully created page '{title}' (ID {result['id']})"
+                    )
                 else:
                     log.error(f"❌ Failed to create page '{title}'")
             except Exception as e:
-                log.error(f"❌ Exception during create_page for '{title}': {e}", exc_info=True)
-
+                log.error(
+                    f"❌ Exception during create_page for '{title}': {e}", exc_info=True
+                )
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)

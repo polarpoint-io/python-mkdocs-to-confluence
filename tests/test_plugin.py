@@ -133,8 +133,7 @@ def test_on_page_markdown_adds_header(plugin):
     result = plugin.on_page_markdown(markdown, page, None, None)
 
     assert result == markdown
-    assert "README" in plugin.page_lookup
-
+    assert plugin._normalize_title("README") in plugin.page_lookup
 
 
 def test_on_page_content_footer(plugin):
