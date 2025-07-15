@@ -404,9 +404,15 @@ class ConfluencePlugin(BasePlugin):
     def page_exists(self, title, parent_id=None):
         return self.find_page_id(title, parent_id) is not None
 
+
     def _normalize_title(self, title: str) -> str:
-        table = str.maketrans("", "", string.punctuation)
-        return title.strip().lower().translate(table).replace(" ", "")
+        """
+        Normalize title by lowercasing, removing punctuation, and stripping whitespace.
+        Preserves letters and digits, removes spaces and all punctuation characters.
+        """
+        title = title.strip().lower()
+        return title.translate(str.maketrans('', '', string.punctuation)).replace(" ", "")
+        
 
     def create_page(self, title, body, parent_id, is_folder=False):
         norm_title = self._normalize_title(title)
@@ -716,33 +722,55 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-    def build_and_publish_tree(self, nav, parent_id=None):
+
+    def build_and_publish_tree(self, nav, parent_id):
+        """
+        Recursively publishes nav tree. Folder nodes get empty bodies, content nodes get markdown content.
+        """
         for node in nav:
             if isinstance(node, str):
-                norm_node = self._normalize_title(node)
-                if norm_node not in self.page_lookup:
-                    log.warning(
-                        f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{norm_node}')"
-                    )
+                key = self._normalize_title(node)
+                page = self.page_lookup.get(key)
+
+                if not page:
+                    log.warning(f"⚠️ Skipping node '{node}' — not found in page_lookup (normalized key: '{key}')")
                     continue
 
-                page = self.page_lookup[norm_node]
-                page_body = page["content"]
                 self.publish_page(
-                    title=page["title"],
-                    body=page_body,
+                    page_title=node,
+                    body=page.get("content", ""),
                     parent_id=parent_id,
-                    source_path=page["source_path"],
+                    source_path=page.get("source_path"),
+                    dryrun=self.dryrun,
                 )
 
             elif isinstance(node, dict):
-                for section_title, children in node.items():
-                    folder_id = self.create_page(
-                        title=section_title,
-                        body="",  # Explicitly empty for folders
-                        parent_id=parent_id,
-                    )
+                for folder_title, children in node.items():
+                    folder_key = self._normalize_title(folder_title)
+
+                    folder_id = self.page_ids.get(folder_key)
+                    if not folder_id:
+                        # Create folder if it doesn't exist
+                        if self.dryrun:
+                            self.dryrun_log(f"[DRY RUN] Would create folder page: {folder_title}")
+                            folder_id = "dryrun-folder-id"
+                        else:
+                            folder_response = self.api.create_page(
+                                space=self.space,
+                                title=folder_title,
+                                body="",  # folders have no body
+                                parent_id=parent_id
+                            )
+                            if folder_response:
+                                folder_id = folder_response["id"]
+                                self.page_ids[folder_key] = folder_id
+                                log.info(f"📁 Created folder page '{folder_title}' with ID {folder_id}")
+                            else:
+                                log.warning(f"❌ Failed to create folder page '{folder_title}'")
+                                continue  # Skip this branch if folder couldn't be created
+
                     self.build_and_publish_tree(children, parent_id=folder_id)
+
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -759,68 +787,28 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def publish_page(self, page_data):
-        if not isinstance(page_data, dict):
-            log.error("❌ Invalid input to publish_page(): expected a dict")
+
+    def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
+        """
+        Publishes a content page to Confluence under the given parent ID.
+        """
+        log.info(f"📄 Attempting to create page '{page_title}' under parent ID {parent_id}")
+        if dryrun:
+            self.dryrun_log(f"[DRY RUN] Would publish page: {page_title}")
             return
 
-        title = page_data.get("title")
-        body = page_data.get("content", "")
-        parent_id = page_data.get("parent_id")
-        source_path = page_data.get("source_path")
+        response = self.api.create_page(
+            space=self.space,
+            title=page_title,
+            body=body,
+            parent_id=parent_id
+        )
 
-        if not title:
-            log.error("❌ Cannot publish page: 'title' is missing in page_data")
-            return
-
-        if not body.strip():
-            log.warning(f"⚠️ Skipping publish of empty page '{title}'")
-            return
-
-        if self.dryrun:
-            self.dryrun_log("publish", title, parent_id)
-            return
-
-        # First, try to find page
-        page_id = self.find_page_id(title, parent_id)
-
-        if page_id:
-            log.info(
-                f"🔁 Updating page '{title}' (ID {page_id}) under parent ID {parent_id}"
-            )
-            try:
-                self.confluence.update_page(
-                    page_id=page_id,
-                    title=title,
-                    body=body,
-                    parent_id=parent_id,
-                    type="page",
-                    representation="storage",
-                    minor_edit=False,
-                )
-                log.info(f"✅ Updated page '{title}' (ID {page_id})")
-            except Exception as e:
-                log.error(f"❌ Failed to update page '{title}': {e}", exc_info=True)
+        if response:
+            log.info(f"✅ Created content page '{page_title}' with ID {response['id']}")
         else:
-            log.info(f"📄 Creating new page '{title}' under parent ID {parent_id}")
-            try:
-                result = self.confluence.create_page(
-                    space=self.config["space"],
-                    title=title,
-                    body=body,
-                    parent_id=parent_id,
-                    representation="storage",
-                )
-                if result and "id" in result:
-                    log.info(
-                        f"✅ Successfully created page '{title}' (ID {result['id']})"
-                    )
-                else:
-                    log.error(f"❌ Failed to create page '{title}'")
-            except Exception as e:
-                log.error(
-                    f"❌ Exception during create_page for '{title}': {e}", exc_info=True
-                )
+            log.warning(f"❌ Failed to create page '{page_title}'")
+
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
