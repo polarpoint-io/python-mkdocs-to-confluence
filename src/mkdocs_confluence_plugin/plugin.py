@@ -261,10 +261,6 @@ class ConfluencePlugin(BasePlugin):
         self.page_ids.clear()
         self.page_versions.clear()
 
-    def dryrun_log(self, action: str, title: str, parent_id=None):
-        parent_info = f" under parent ID {parent_id}" if parent_id else ""
-        log.info(f"DRYRUN: Would {action} page '{title}'{parent_info}")
-
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
             part = parts[0].replace("_", " ").title()
@@ -429,10 +425,12 @@ class ConfluencePlugin(BasePlugin):
             log.info(
                 f"📄 Attempting to create page '{title}' under parent ID {parent_id}"
             )
+            # Use empty string for folder body, avoid TEMPLATE_BODY for child/content pages
+            body_to_use = "" if is_folder else (body or "")
             result = self.confluence.create_page(
                 space=self.config["space"],
                 title=title,
-                body=body or "",
+                body=body_to_use,
                 parent_id=parent_id,
                 representation="storage",
             )
@@ -453,7 +451,7 @@ class ConfluencePlugin(BasePlugin):
                 log.error(f"❌ Failed to create page '{title}': {e}", exc_info=True)
                 return None
 
-        # Fallback to update if creation failed
+        # Fallback: update existing page if creation fails
         page_id = self.find_page_id(title, parent_id)
         if not page_id:
             log.error(
@@ -471,7 +469,7 @@ class ConfluencePlugin(BasePlugin):
             self.confluence.update_page(
                 page_id=page_id,
                 title=title,
-                body=body or "",  # Ensure this is an empty string, not 'TEMPLATE'
+                body="" if is_folder else (body or ""),  # Folder pages get empty body
                 parent_id=parent_id,
                 type="page",
                 representation="storage",
@@ -711,11 +709,15 @@ class ConfluencePlugin(BasePlugin):
                 for folder_title, children in node.items():
                     normalized_folder_title = self._normalize_title(folder_title)
 
-                    # For folder pages, body is empty string
-                    folder_id = self.create_or_update_page(folder_title, "", parent_id)
+                    # Folder pages get empty body, not TEMPLATE_BODY
+                    folder_id = self.create_or_update_page(
+                        folder_title,
+                        "",
+                        parent_id,
+                    )
                     self.page_ids[(normalized_folder_title, parent_id)] = folder_id
 
-                    # Recursive call for children under folder page
+                    # Recurse into children under folder page
                     self.build_and_publish_tree(children, folder_id)
 
     def find_or_create_folder_page(self, title, parent_id):
@@ -853,6 +855,10 @@ class ConfluencePlugin(BasePlugin):
                 exc_info=True,
             )
             return None
+
+    def dryrun_log(self, action: str, title: str, parent_id=None):
+        parent_info = f" under parent ID {parent_id}" if parent_id else ""
+        log.info(f"DRYRUN: Would {action} page '{title}'{parent_info}")
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
