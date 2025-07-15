@@ -318,6 +318,11 @@ class ConfluencePlugin(BasePlugin):
         source_path = page.file.abs_src_path
         norm_title = self._normalize_title(title)
 
+        if not markdown or not markdown.strip():
+            self.logger.warning(
+                f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'"
+            )
+
         # Render markdown to Confluence storage format HTML
         rendered_body = self.confluence_mistune(markdown)
 
@@ -701,6 +706,11 @@ class ConfluencePlugin(BasePlugin):
                 normalized_title = self._normalize_title(page_title)
                 body = self.page_lookup.get(normalized_title, {}).get("content", "")
 
+                if not body:
+                    log.warning(
+                        f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence"
+                    )
+
                 page_id = self.create_or_update_page(page_title, body, parent_id)
                 self.page_ids[(normalized_title, parent_id)] = page_id
 
@@ -709,7 +719,7 @@ class ConfluencePlugin(BasePlugin):
                 for folder_title, children in node.items():
                     normalized_folder_title = self._normalize_title(folder_title)
 
-                    # Folder pages get empty body, not TEMPLATE_BODY
+                    # Folder pages get empty body
                     folder_id = self.create_or_update_page(
                         folder_title,
                         "",
@@ -760,8 +770,8 @@ class ConfluencePlugin(BasePlugin):
                     title=title,
                     body=body,
                     parent_id=parent_id,
-                    version_comment="Updated by mkdocs-confluence-plugin",
-                    version=new_version,
+                    minor_edit=False,
+                    update_message="Updated by mkdocs-confluence-plugin",
                 )
                 self.logger.info(f"Updated page '{title}' (ID: {page_id})")
             else:
