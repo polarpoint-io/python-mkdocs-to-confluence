@@ -81,7 +81,7 @@ class ConfluencePlugin(BasePlugin):
 
     def on_config(self, config):
         plugin_cfg = self.config
-        self.space = self.config.get("space") 
+        self.space = self.config.get("space")
         self.enabled = plugin_cfg.get("enabled", True)
         self.only_in_nav = plugin_cfg.get("only_in_nav", False)
 
@@ -229,7 +229,7 @@ class ConfluencePlugin(BasePlugin):
                                 result = self.confluence.create_page(
                                     space=self.config["space"],
                                     title=norm_title,
-                                    body="",  # No body for folder
+                                    body="",  # No body for folder pages
                                     parent_id=parent_id,
                                     representation="storage",
                                 )
@@ -313,13 +313,14 @@ class ConfluencePlugin(BasePlugin):
             parent = self.page_parents.get(parent)
         return " / ".join(path)
 
-
     def on_page_markdown(self, markdown, page, config, files):
         title = page.title
         source_path = page.file.abs_src_path
 
         if not markdown or not markdown.strip():
-            self.logger.warning(f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'")
+            self.logger.warning(
+                f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'"
+            )
 
         rendered_body = self.confluence_mistune(markdown)
 
@@ -334,9 +335,6 @@ class ConfluencePlugin(BasePlugin):
         }
 
         return markdown
-
-
-
 
     def on_page_content(self, html, page, config, files):
         print("🧪 on_page_content called")
@@ -692,8 +690,6 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-
-
     def build_and_publish_tree(self, nav_structure, parent_id):
         for item in nav_structure:
             if isinstance(item, str):
@@ -706,22 +702,29 @@ class ConfluencePlugin(BasePlugin):
                         break
 
                 if not page_data:
-                    self.logger.warning(f"🚫 Page content for '{page_title}' not found in page_lookup.")
+                    self.logger.warning(
+                        f"🚫 Page content for '{page_title}' not found in page_lookup."
+                    )
                     body = ""
                 else:
                     body = page_data["content"]
 
                 if not body:
-                    self.logger.warning(f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence")
+                    self.logger.warning(
+                        f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence"
+                    )
 
                 page_id = self.create_or_update_page(page_title, body, parent_id)
 
             elif isinstance(item, dict):
                 for folder_title, children in item.items():
-                    self.logger.info(f"Creating page '{folder_title}' under parent ID {parent_id}")
-                    folder_id = self.create_page(folder_title, "", parent_id)
+                    self.logger.info(
+                        f"Creating page '{folder_title}' under parent ID {parent_id}"
+                    )
+                    folder_id = self.create_page(
+                        folder_title, "", parent_id, is_folder=True
+                    )
                     self.build_and_publish_tree(children, folder_id)
-
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
