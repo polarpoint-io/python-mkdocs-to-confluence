@@ -313,31 +313,21 @@ class ConfluencePlugin(BasePlugin):
             parent = self.page_parents.get(parent)
         return " / ".join(path)
 
+
     def on_page_markdown(self, markdown, page, config, files):
-        title = page.title
-        source_path = page.file.abs_src_path
+        key = getattr(page.file, "abs_src_path", None) or getattr(page.file, "src_path", None)
+        if not key:
+            key = page.title.lower().replace(" ", "-")
 
-        if not markdown or not markdown.strip():
-            self.logger.warning(
-                f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'"
-            )
-
-        rendered_body = self.confluence_mistune(markdown)
-
-        # DEBUG: Log length and a preview of rendered HTML
-        preview = rendered_body[:200].replace("\n", " ")
-        self.logger.debug(
-            f"on_page_markdown: title='{title}', rendered_body length={len(rendered_body)}, preview='{preview}'"
-        )
-
-        self.page_lookup[source_path] = {
-            "title": title,
-            "content": rendered_body,
-            "parent_id": None,
-            "source_path": source_path,
+        self.page_lookup[key] = {
+            "title": page.title,
+            "body": markdown,
+            "parent_id": None,       # optionally set later
+            "is_folder": False       # optionally used by debug dump
         }
 
         return markdown
+
 
     def on_page_content(self, html, page, config, files):
         print("🧪 on_page_content called")
@@ -358,6 +348,10 @@ class ConfluencePlugin(BasePlugin):
         footer = f'\n<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>\n'
         print(f"✅ Adding footer: {footer.strip()}")
         return html + footer
+
+    def normalize_title_key(self, title: str) -> str:
+        # Normalize the title to lowercase and replace spaces with dashes
+        return title.lower().replace(" ", "-")
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
@@ -693,45 +687,48 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-    def build_and_publish_tree(self, nav_structure, parent_id):
-        for item in nav_structure:
-            if isinstance(item, str):
-                page_title = item
-                # Try to find page in lookup by title
-                page_data = None
-                for p in self.page_lookup.values():
-                    if p["title"] == page_title:
-                        page_data = p
-                        break
+    def build_and_publish_tree(self, nav_items, parent_id):
+        """
+        Recursively create pages in Confluence from nav structure.
 
-                if not page_data:
-                    self.logger.warning(
-                        f"🚫 Page content for '{page_title}' not found in page_lookup."
-                    )
-                    body = ""
-                else:
-                    body = page_data["content"]
-
-                if not body or not body.strip():
-                    self.logger.warning(
-                        f"⚠️ Page '{page_title}' has empty or whitespace-only content."
-                    )
-
-                self.logger.info(
-                    f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(body)}"
-                )
-
-                page_id = self.create_or_update_page(page_title, body, parent_id)
-
-            elif isinstance(item, dict):
+        nav_items: list of str or dict (folder title -> children list)
+        parent_id: Confluence page ID to publish under
+        """
+        for item in nav_items:
+            if isinstance(item, dict):
+                # Folder page
                 for folder_title, children in item.items():
+                    folder_key = self.normalize_title_key(folder_title)
+                    folder_content = self.page_lookup.get(
+                        folder_key, ""
+                    )  # usually empty for folders
+
                     self.logger.info(
                         f"Creating folder page '{folder_title}' under parent ID {parent_id}"
                     )
-                    folder_id = self.create_page(
-                        folder_title, "", parent_id, is_folder=True
+                    folder_page_id = self.create_or_update_page(
+                        folder_title, parent_id, folder_content, folder=True
                     )
-                    self.build_and_publish_tree(children, folder_id)
+                    self.build_and_publish_tree(children, folder_page_id)
+
+            else:
+                # Leaf page (content page)
+                page_title = item
+                page_key = self.normalize_title_key(page_title)
+                page_content = self.page_lookup.get(page_key, None)
+
+                if page_content is None or not page_content.strip():
+                    self.logger.warning(
+                        f"🚫 Page content for '{page_title}' (key '{page_key}') not found or empty."
+                    )
+                    page_content = ""  # fallback empty content
+
+                self.logger.info(
+                    f"Creating content page '{page_title}' under parent ID {parent_id}"
+                )
+                self.create_or_update_page(
+                    page_title, parent_id, page_content, folder=False
+                )
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -748,15 +745,17 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def create_or_update_page(self, title, body, parent_id):
+    def create_or_update_page(self, title, body, parent_id, folder=False):
         """
         Create or update a Confluence page under the given parent_id.
+        If folder=True, create the page with an empty body (for folder pages).
         Returns the ID of the created or updated page.
         """
-        # Log body length before API call
-        body_length = len(body) if body else 0
+        # For folders, override body with empty string
+        body_to_use = "" if folder else (body or "")
+
         self.logger.info(
-            f"create_or_update_page: Publishing page '{title}' under parent {parent_id} with body length {body_length}"
+            f"create_or_update_page: Publishing page '{title}' under parent {parent_id} with body length {len(body_to_use)}"
         )
 
         try:
@@ -770,8 +769,11 @@ class ConfluencePlugin(BasePlugin):
                 self.confluence.update_page(
                     page_id=existing_page_id,
                     title=title,
-                    body=body,
+                    body=body_to_use,
                     parent_id=parent_id,
+                    type="page",
+                    representation="storage",
+                    minor_edit=False,
                 )
                 return existing_page_id
         except Exception as e:
@@ -789,8 +791,9 @@ class ConfluencePlugin(BasePlugin):
         page_id = self.confluence.create_page(
             space=self.space,
             title=title,
-            body=body,
+            body=body_to_use,
             parent_id=parent_id,
+            representation="storage",
         )
         return page_id
 
