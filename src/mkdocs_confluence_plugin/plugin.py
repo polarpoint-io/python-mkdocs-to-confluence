@@ -316,7 +316,6 @@ class ConfluencePlugin(BasePlugin):
     def on_page_markdown(self, markdown, page, config, files):
         title = page.title
         source_path = page.file.abs_src_path
-        norm_title = self._normalize_title(title)
 
         if not markdown or not markdown.strip():
             self.logger.warning(
@@ -326,11 +325,9 @@ class ConfluencePlugin(BasePlugin):
         # Render markdown to Confluence storage format HTML
         rendered_body = self.confluence_mistune(markdown)
 
-        self.logger.debug(
-            f"📄 Adding page to lookup: '{title}' (normalized: '{norm_title}') from '{source_path}'"
-        )
+        self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
 
-        self.page_lookup[norm_title] = {
+        self.page_lookup[title] = {
             "title": title,
             "content": rendered_body,
             "parent_id": None,
@@ -338,6 +335,7 @@ class ConfluencePlugin(BasePlugin):
         }
 
         return markdown
+
 
     def on_page_content(self, html, page, config, files):
         print("🧪 on_page_content called")
@@ -693,6 +691,7 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
+
     def build_and_publish_tree(self, nav_tree, parent_id):
         """
         Recursively create or update Confluence pages based on nav_tree structure.
@@ -703,8 +702,12 @@ class ConfluencePlugin(BasePlugin):
             if isinstance(node, str):
                 # Leaf page
                 page_title = node
-                normalized_title = self._normalize_title(page_title)
-                body = self.page_lookup.get(normalized_title, {}).get("content", "")
+                page_data = self.page_lookup.get(page_title)
+                if not page_data:
+                    log.warning(f"🚫 Page content for '{page_title}' not found in page_lookup.")
+                    body = ""
+                else:
+                    body = page_data.get("content", "")
 
                 if not body:
                     log.warning(
@@ -712,7 +715,7 @@ class ConfluencePlugin(BasePlugin):
                     )
 
                 page_id = self.create_or_update_page(page_title, body, parent_id)
-                self.page_ids[(normalized_title, parent_id)] = page_id
+                self.page_ids[(self._normalize_title(page_title), parent_id)] = page_id
 
             elif isinstance(node, dict):
                 # Folder with children
@@ -729,6 +732,7 @@ class ConfluencePlugin(BasePlugin):
 
                     # Recurse into children under folder page
                     self.build_and_publish_tree(children, folder_id)
+
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
