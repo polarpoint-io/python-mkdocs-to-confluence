@@ -313,6 +313,7 @@ class ConfluencePlugin(BasePlugin):
             parent = self.page_parents.get(parent)
         return " / ".join(path)
 
+
     def on_page_markdown(self, markdown, page, config, files):
         title = page.title
         source_path = page.file.abs_src_path
@@ -322,7 +323,6 @@ class ConfluencePlugin(BasePlugin):
                 f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'"
             )
 
-        # Render markdown to Confluence storage format HTML
         rendered_body = self.confluence_mistune(markdown)
 
         self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
@@ -335,6 +335,7 @@ class ConfluencePlugin(BasePlugin):
         }
 
         return markdown
+
 
 
     def on_page_content(self, html, page, config, files):
@@ -692,46 +693,30 @@ class ConfluencePlugin(BasePlugin):
         log.info("✅ End of debug dump.")
 
 
-    def build_and_publish_tree(self, nav_tree, parent_id):
-        """
-        Recursively create or update Confluence pages based on nav_tree structure.
-        nav_tree: list of nodes (str for page or dict for folder with children)
-        parent_id: Confluence page ID under which to create pages
-        """
-        for node in nav_tree:
-            if isinstance(node, str):
-                # Leaf page
-                page_title = node
+
+    def build_and_publish_tree(self, nav_structure, parent_id):
+        for item in nav_structure:
+            if isinstance(item, str):
+                page_title = item
                 page_data = self.page_lookup.get(page_title)
+
                 if not page_data:
-                    log.warning(f"🚫 Page content for '{page_title}' not found in page_lookup.")
+                    self.logger.warning(f"🚫 Page content for '{page_title}' not found in page_lookup.")
                     body = ""
                 else:
-                    body = page_data.get("content", "")
+                    body = page_data["content"]
 
                 if not body:
-                    log.warning(
-                        f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence"
-                    )
+                    self.logger.warning(f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence")
 
                 page_id = self.create_or_update_page(page_title, body, parent_id)
-                self.page_ids[(self._normalize_title(page_title), parent_id)] = page_id
 
-            elif isinstance(node, dict):
-                # Folder with children
-                for folder_title, children in node.items():
-                    normalized_folder_title = self._normalize_title(folder_title)
-
-                    # Folder pages get empty body
-                    folder_id = self.create_or_update_page(
-                        folder_title,
-                        "",
-                        parent_id,
-                    )
-                    self.page_ids[(normalized_folder_title, parent_id)] = folder_id
-
-                    # Recurse into children under folder page
+            elif isinstance(item, dict):
+                for folder_title, children in item.items():
+                    self.logger.info(f"Creating page '{folder_title}' under parent ID {parent_id}")
+                    folder_id = self.create_page(folder_title, "", parent_id)
                     self.build_and_publish_tree(children, folder_id)
+
 
 
     def find_or_create_folder_page(self, title, parent_id):
