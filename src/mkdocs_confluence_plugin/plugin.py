@@ -324,9 +324,12 @@ class ConfluencePlugin(BasePlugin):
 
         rendered_body = self.confluence_mistune(markdown)
 
-        self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
+        # DEBUG: Log length and a preview of rendered HTML
+        preview = rendered_body[:200].replace("\n", " ")
+        self.logger.debug(
+            f"on_page_markdown: title='{title}', rendered_body length={len(rendered_body)}, preview='{preview}'"
+        )
 
-        # Use source path as the key — not title
         self.page_lookup[source_path] = {
             "title": title,
             "content": rendered_body,
@@ -709,17 +712,21 @@ class ConfluencePlugin(BasePlugin):
                 else:
                     body = page_data["content"]
 
-                if not body:
+                if not body or not body.strip():
                     self.logger.warning(
-                        f"⚠️ Page '{page_title}' has no content — rendering empty page in Confluence"
+                        f"⚠️ Page '{page_title}' has empty or whitespace-only content."
                     )
+
+                self.logger.info(
+                    f"Publishing page '{page_title}' under parent ID {parent_id} with body length {len(body)}"
+                )
 
                 page_id = self.create_or_update_page(page_title, body, parent_id)
 
             elif isinstance(item, dict):
                 for folder_title, children in item.items():
                     self.logger.info(
-                        f"Creating page '{folder_title}' under parent ID {parent_id}"
+                        f"Creating folder page '{folder_title}' under parent ID {parent_id}"
                     )
                     folder_id = self.create_page(
                         folder_title, "", parent_id, is_folder=True
@@ -746,6 +753,12 @@ class ConfluencePlugin(BasePlugin):
         Create or update a Confluence page under the given parent_id.
         Returns the ID of the created or updated page.
         """
+        # Log body length before API call
+        body_length = len(body) if body else 0
+        self.logger.info(
+            f"create_or_update_page: Publishing page '{title}' under parent {parent_id} with body length {body_length}"
+        )
+
         try:
             existing_page_id = self.find_page_id(title, parent_id)
             if existing_page_id:
