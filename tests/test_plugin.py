@@ -117,6 +117,7 @@ def test_on_nav_builds_tab_nav(plugin):
     assert "Readme" in flat_nav
 
 
+
 def test_on_page_markdown_adds_header(plugin):
     plugin.config = {"github_base_url": "https://github.com/repo"}
 
@@ -135,7 +136,11 @@ def test_on_page_markdown_adds_header(plugin):
     result = plugin.on_page_markdown(markdown, page, None, None)
 
     assert result == markdown
-    assert "README" in plugin.page_lookup
+
+    # ✅ Match against abs_src_path now (new key)
+    assert "docs/readme.md" in plugin.page_lookup
+    assert plugin.page_lookup["docs/readme.md"]["title"] == "README"
+
 
 
 

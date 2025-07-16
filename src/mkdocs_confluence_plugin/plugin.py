@@ -319,15 +319,14 @@ class ConfluencePlugin(BasePlugin):
         source_path = page.file.abs_src_path
 
         if not markdown or not markdown.strip():
-            self.logger.warning(
-                f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'"
-            )
+            self.logger.warning(f"⚠️ Markdown content is empty for page '{title}' from '{source_path}'")
 
         rendered_body = self.confluence_mistune(markdown)
 
         self.logger.debug(f"📄 Adding page to lookup: '{title}' from '{source_path}'")
 
-        self.page_lookup[title] = {
+        # Use source path as the key — not title
+        self.page_lookup[source_path] = {
             "title": title,
             "content": rendered_body,
             "parent_id": None,
@@ -335,6 +334,7 @@ class ConfluencePlugin(BasePlugin):
         }
 
         return markdown
+
 
 
 
@@ -698,7 +698,12 @@ class ConfluencePlugin(BasePlugin):
         for item in nav_structure:
             if isinstance(item, str):
                 page_title = item
-                page_data = self.page_lookup.get(page_title)
+                # Try to find page in lookup by title
+                page_data = None
+                for p in self.page_lookup.values():
+                    if p["title"] == page_title:
+                        page_data = p
+                        break
 
                 if not page_data:
                     self.logger.warning(f"🚫 Page content for '{page_title}' not found in page_lookup.")
@@ -716,7 +721,6 @@ class ConfluencePlugin(BasePlugin):
                     self.logger.info(f"Creating page '{folder_title}' under parent ID {parent_id}")
                     folder_id = self.create_page(folder_title, "", parent_id)
                     self.build_and_publish_tree(children, folder_id)
-
 
 
     def find_or_create_folder_page(self, title, parent_id):
