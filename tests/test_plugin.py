@@ -201,6 +201,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     }
     plugin.space = plugin.config["space"]
     plugin.parent_page_id = None
+    plugin.attachments = {}  # ✅ FIXED: required for build_and_publish_tree
 
     class DummyConfluence:
         def __init__(self):
@@ -227,11 +228,12 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.pages = [{"title": "New Page", "body": "<p>body</p>", "is_folder": False}]
     plugin.tab_nav = ["New Page"]
     plugin.page_lookup = {
-        "New Page": {
+        "new-page": {
             "title": "New Page",
-            "content": "<p>body</p>",
-            "parent_id": None,
-            "source_path": "docs/new_page.md",
+            "body": "<p>body</p>",
+            "abs_src_path": "docs/new_page.md",
+            "meta": {},
+            "url": "/new-page/",
         }
     }
 
@@ -241,8 +243,6 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.on_post_build(config={}, files=[])
 
     assert plugin.confluence.created_pages == [("New Page", None)]
-
-
 
 
 
@@ -322,6 +322,24 @@ def test_page_exists_returns_true_if_found(plugin):
     assert exists is False
     assert page_id is None
 
+
+def test_build_and_publish_tree_reports_orphan_pages(caplog, plugin):
+    plugin.page_lookup = {
+        "linked-page": {"title": "Linked Page", "body": "content"},
+        "orphan-page": {"title": "Orphan Page", "body": "unused"},
+    }
+    plugin.attachments = {}
+    plugin.confluence = Mock()
+    plugin.confluence.cql.return_value = {"results": []}
+
+    nav = ["Linked Page"]
+    plugin.normalize_title_key = lambda x: x.lower().replace(" ", "-")
+
+    with caplog.at_level("INFO"):
+        plugin.build_and_publish_tree(nav_tree=nav)
+
+    assert "Orphan Page" in caplog.text
+    assert "linked-page" not in caplog.text
 
 def test_get_file_sha1(tmp_path, plugin):
     file = tmp_path / "hash.txt"

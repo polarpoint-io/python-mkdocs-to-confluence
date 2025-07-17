@@ -402,11 +402,9 @@ class ConfluencePlugin(BasePlugin):
             return f"{self.config['host_url'].rstrip('/')}/pages/viewpage.action?pageId={page_id}"
         return None
 
-
     def page_exists(self, title, parent_id=None):
         page_id = self.find_page_id(title, parent_id)
         return (page_id is not None, page_id)
-
 
     def _normalize_title(self, title: str) -> str:
         """
@@ -701,14 +699,27 @@ class ConfluencePlugin(BasePlugin):
             nav_tree (list): The MkDocs navigation structure.
             parent_id (str): Confluence parent page ID.
         """
+        from difflib import get_close_matches
+
+        unmatched_pages = []
+        matched_keys = set()
+
         for node in nav_tree:
             if isinstance(node, str):
-                # Leaf node - regular content page
-                page_info = self.page_lookup.get(node)
+                lookup_key = self.normalize_title_key(node)
+                page_info = self.page_lookup.get(lookup_key)
+
                 if not page_info:
-                    log.warning(f"⚠️ No page data found for '{node}'. Skipping.")
+                    possible_keys = list(self.page_lookup.keys())
+                    matches = get_close_matches(lookup_key, possible_keys, n=3)
+                    unmatched_pages.append((node, lookup_key, matches))
+                    log.warning(
+                        f"⚠️ No page data found for '{node}' → tried key '{lookup_key}'"
+                    )
+                    log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
                     continue
 
+                matched_keys.add(lookup_key)
                 body = page_info.get("body", "")
                 abs_src_path = page_info.get("abs_src_path")
                 attachments = (
@@ -744,21 +755,20 @@ class ConfluencePlugin(BasePlugin):
             else:
                 log.warning(f"⚠️ Unknown node type in nav: {node}")
 
-    def find_or_create_folder_page(self, title, parent_id):
-        page_id = self.find_page_id(title, parent_id)
-        if page_id:
-            return page_id
+        if unmatched_pages:
+            log.info("\n📋 Summary of unmatched nav titles:")
+            for orig, key, matches in unmatched_pages:
+                log.info(
+                    f"  - '{orig}' → '{key}' | closest matches: {matches if matches else 'None'}"
+                )
 
-        log.warning(
-            f"Folder '{title}' not found. Creating it under parent ID {parent_id}"
-        )
-
-        if self.dryrun:
-            self.dryrun_log(f"create folder", title, parent_id)
-            return f"DUMMY_ID_{title}"  # return dummy ID to keep recursion safe
-
-        return self.create_page(title, "", parent_id)
-
+        all_keys = set(self.page_lookup.keys())
+        unused_keys = all_keys - matched_keys
+        if unused_keys:
+            log.info("\n📄 Orphan .md files in 'docs/' not linked from nav:")
+            for key in sorted(unused_keys):
+                title = self.page_lookup[key]["title"]
+                log.info(f"  - {title}  (key: {key})")
 
     def create_or_update_page(
         self,
@@ -785,11 +795,15 @@ class ConfluencePlugin(BasePlugin):
         else:
             log.info(f"🆕 Page does not exist: '{title}' — creating.")
             if not self.dryrun:
-                created = self.confluence.create_page(self.space, title, body, parent_id)
+                created = self.confluence.create_page(
+                    self.space, title, body, parent_id
+                )
                 page_id = created.get("id")
             else:
                 page_id = f"DRYRUN-{title}"
-                self.dryrun_log(f"Would create page '{title}' under parent ID {parent_id}")
+                self.dryrun_log(
+                    f"Would create page '{title}' under parent ID {parent_id}"
+                )
 
         # Attachments handling
         if attachments and abs_src_path and not self.dryrun:
@@ -797,8 +811,6 @@ class ConfluencePlugin(BasePlugin):
 
         self.page_ids[key] = page_id
         return page_id
-
-
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)
