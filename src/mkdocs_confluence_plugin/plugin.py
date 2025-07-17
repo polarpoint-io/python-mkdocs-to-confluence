@@ -315,18 +315,21 @@ class ConfluencePlugin(BasePlugin):
 
 
     def on_page_markdown(self, markdown, page, config, files):
-        key = getattr(page.file, "abs_src_path", None) or getattr(page.file, "src_path", None)
-        if not key:
-            key = page.title.lower().replace(" ", "-")
+        """Capture page content before it's rendered and store by normalized title."""
+        abs_src_path = page.file.abs_src_path
+        title_key = self.normalize_title_key(page.title)
+        rendered = self.confluence_mistune(markdown)
 
-        self.page_lookup[key] = {
+        self.page_lookup[title_key] = {
             "title": page.title,
-            "body": markdown,
-            "parent_id": None,       # optionally set later
-            "is_folder": False       # optionally used by debug dump
+            "body": rendered,
+            "abs_src_path": abs_src_path,
+            "meta": page.meta,
+            "url": page.canonical_url,
         }
 
-        return markdown
+        self.logger.debug(f"📥 Cached page content under key '{title_key}' from '{abs_src_path}'")
+        return markdown  # Let MkDocs proceed as usual
 
 
     def on_page_content(self, html, page, config, files):
@@ -745,57 +748,52 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def create_or_update_page(self, title, body, parent_id, folder=False):
-        """
-        Create or update a Confluence page under the given parent_id.
-        If folder=True, create the page with an empty body (for folder pages).
-        Returns the ID of the created or updated page.
-        """
-        # For folders, override body with empty string
-        body_to_use = "" if folder else (body or "")
 
-        self.logger.info(
-            f"create_or_update_page: Publishing page '{title}' under parent {parent_id} with body length {len(body_to_use)}"
-        )
+    def create_or_update_page(self, title, parent_id, page_data=None, is_folder=False):
+        """Create or update a Confluence page under the given parent ID."""
+        # Prepare the page body
+        if is_folder:
+            body = ""  # Folders have empty bodies
+        elif page_data and "body" in page_data:
+            body = page_data["body"]
+        else:
+            self.logger.warning(f"🚫 Skipping page '{title}' — no content found for parent ID {parent_id}")
+            return None
 
-        try:
-            existing_page_id = self.find_page_id(title, parent_id)
-            if existing_page_id:
-                if self.dryrun:
-                    self.dryrun_log(f"[DRY RUN] Would update page '{title}'")
-                    return existing_page_id
-
-                self.logger.info(f"Updating page '{title}' (ID: {existing_page_id})")
+        existing_page_id = self.find_page_id(title, parent_id)
+        if existing_page_id:
+            if self.dry_run:
+                self.dryrun_log(f"🔁 Would update page: {title} (id={existing_page_id})")
+            else:
+                self.logger.info(f"🔁 Updating page: {title} (id={existing_page_id})")
                 self.confluence.update_page(
-                    page_id=existing_page_id,
-                    title=title,
-                    body=body_to_use,
-                    parent_id=parent_id,
-                    type="page",
+                    parent_id,
+                    title,
+                    body,
+                    existing_page_id,
                     representation="storage",
-                    minor_edit=False,
+                    minor_edit=True,
                 )
-                return existing_page_id
-        except Exception as e:
-            self.logger.error(
-                f"Exception while creating/updating page '{title}': {e}", exc_info=True
-            )
+            return existing_page_id
+        else:
+            if self.dry_run:
+                self.dryrun_log(f"📄 Would create page: {title} under parent ID {parent_id}")
+            else:
+                self.logger.info(f"📄 Creating page: {title} under parent ID {parent_id}")
+                new_page = self.confluence.create_page(
+                    self.space,
+                    title,
+                    body,
+                    parent_id=parent_id,
+                    type='page',
+                    representation="storage",
+                )
+                if new_page and "id" in new_page:
+                    return new_page["id"]
+                else:
+                    self.logger.error(f"❌ Failed to create page: {title}")
+                    return None
 
-        if self.dryrun:
-            self.dryrun_log(
-                f"[DRY RUN] Would create page '{title}' under parent ID {parent_id}"
-            )
-            return -1
-
-        self.logger.info(f"Creating page '{title}' under parent ID {parent_id}")
-        page_id = self.confluence.create_page(
-            space=self.space,
-            title=title,
-            body=body_to_use,
-            parent_id=parent_id,
-            representation="storage",
-        )
-        return page_id
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)
