@@ -129,6 +129,8 @@ def test_on_page_markdown_adds_header(plugin):
         def __init__(self):
             self.title = "README"
             self.file = DummyFile("docs/readme.md")
+            self.meta = {}
+            self.canonical_url = "/readme/"
 
     page = DummyPage()
     markdown = "# title"
@@ -136,12 +138,8 @@ def test_on_page_markdown_adds_header(plugin):
     result = plugin.on_page_markdown(markdown, page, None, None)
 
     assert result == markdown
-
-    # ✅ Match against abs_src_path now (new key)
-    assert "docs/readme.md" in plugin.page_lookup
-    assert plugin.page_lookup["docs/readme.md"]["title"] == "README"
-
-
+    assert "readme" in plugin.page_lookup
+    assert plugin.page_lookup["readme"]["abs_src_path"] == "docs/readme.md"
 
 
 def test_on_page_content_footer(plugin):

@@ -313,7 +313,6 @@ class ConfluencePlugin(BasePlugin):
             parent = self.page_parents.get(parent)
         return " / ".join(path)
 
-
     def on_page_markdown(self, markdown, page, config, files):
         """Capture page content before it's rendered and store by normalized title."""
         abs_src_path = page.file.abs_src_path
@@ -328,9 +327,10 @@ class ConfluencePlugin(BasePlugin):
             "url": page.canonical_url,
         }
 
-        self.logger.debug(f"📥 Cached page content under key '{title_key}' from '{abs_src_path}'")
+        self.logger.debug(
+            f"📥 Cached page content under key '{title_key}' from '{abs_src_path}'"
+        )
         return markdown  # Let MkDocs proceed as usual
-
 
     def on_page_content(self, html, page, config, files):
         print("🧪 on_page_content called")
@@ -748,52 +748,70 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
+    def create_or_update_page(self, title, parent_id, content=None, folder=False):
+        """
+        Create or update a Confluence page.
 
-    def create_or_update_page(self, title, parent_id, page_data=None, is_folder=False):
-        """Create or update a Confluence page under the given parent ID."""
-        # Prepare the page body
-        if is_folder:
-            body = ""  # Folders have empty bodies
-        elif page_data and "body" in page_data:
-            body = page_data["body"]
-        else:
-            self.logger.warning(f"🚫 Skipping page '{title}' — no content found for parent ID {parent_id}")
-            return None
+        :param title: Title of the page
+        :param parent_id: Parent Confluence page ID
+        :param content: dict with keys 'title', 'content', 'parent_id', 'source_path'
+        :param folder: Whether this is a folder page (True = no content body)
+        :return: Confluence page ID
+        """
+        normalized_title = self._normalize_title(title)
+        content_body = content.get("content", "") if isinstance(content, dict) else ""
+
+        if folder:
+            # Use a blank body for folder pages
+            content_body = ""
 
         existing_page_id = self.find_page_id(title, parent_id)
-        if existing_page_id:
-            if self.dry_run:
-                self.dryrun_log(f"🔁 Would update page: {title} (id={existing_page_id})")
-            else:
-                self.logger.info(f"🔁 Updating page: {title} (id={existing_page_id})")
-                self.confluence.update_page(
-                    parent_id,
-                    title,
-                    body,
-                    existing_page_id,
-                    representation="storage",
-                    minor_edit=True,
-                )
-            return existing_page_id
-        else:
-            if self.dry_run:
-                self.dryrun_log(f"📄 Would create page: {title} under parent ID {parent_id}")
-            else:
-                self.logger.info(f"📄 Creating page: {title} under parent ID {parent_id}")
-                new_page = self.confluence.create_page(
-                    self.space,
-                    title,
-                    body,
-                    parent_id=parent_id,
-                    type='page',
-                    representation="storage",
-                )
-                if new_page and "id" in new_page:
-                    return new_page["id"]
-                else:
-                    self.logger.error(f"❌ Failed to create page: {title}")
-                    return None
 
+        if self.dryrun:
+            self.dryrun_log(
+                f"[DRYRUN] Would {'update' if existing_page_id else 'create'} page: '{title}' under parent ID {parent_id}"
+            )
+            return "DRYRUN_PAGE_ID"
+
+        if existing_page_id:
+            # Update existing page
+            version = self.page_versions.get(title, 1)
+            self.logger.info(
+                f"🔄 Updating page '{title}' (ID: {existing_page_id}) to version {version + 1}"
+            )
+            result = self.confluence.update_page(
+                existing_page_id,
+                title,
+                content_body,
+                version=version + 1,
+            )
+            if result:
+                self.page_ids[title] = existing_page_id
+                self.page_versions[title] = version + 1
+                return existing_page_id
+            else:
+                self.logger.warning(
+                    f"⚠️ Failed to update page '{title}' (ID: {existing_page_id})"
+                )
+                return existing_page_id
+        else:
+            # Create new page
+            self.logger.info(f"🆕 Creating page '{title}' under parent ID {parent_id}")
+            result = self.confluence.create_page(
+                self.space,
+                title,
+                content_body,
+                parent_id=parent_id,
+                representation="storage",
+            )
+            if result and "id" in result:
+                page_id = result["id"]
+                self.page_ids[title] = page_id
+                self.page_versions[title] = 1
+                return page_id
+            else:
+                self.logger.warning(f"⚠️ Failed to create page '{title}'")
+                return None
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)
