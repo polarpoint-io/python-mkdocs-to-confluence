@@ -354,9 +354,9 @@ class ConfluencePlugin(BasePlugin):
         return html + footer
 
     def normalize_title_key(self, title: str) -> str:
-        # Normalize the title to lowercase and replace spaces with dashes
-        return title.lower().replace(" ", "-")
-
+        """Normalize title to generate lookup key consistent with page_lookup keys."""
+        import re
+        return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
         for child, parent in self.page_parents.items():
@@ -692,6 +692,7 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
+
     def build_and_publish_tree(self, nav_tree: list, parent_id: Optional[str] = None):
         """Recursively walk the navigation tree and publish each page to Confluence.
 
@@ -713,9 +714,7 @@ class ConfluencePlugin(BasePlugin):
                     possible_keys = list(self.page_lookup.keys())
                     matches = get_close_matches(lookup_key, possible_keys, n=3)
                     unmatched_pages.append((node, lookup_key, matches))
-                    log.warning(
-                        f"⚠️ No page data found for '{node}' → tried key '{lookup_key}'"
-                    )
+                    log.warning(f"⚠️ No page data found for '{node}' → tried key '{lookup_key}'")
                     log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
                     continue
 
@@ -735,15 +734,11 @@ class ConfluencePlugin(BasePlugin):
                 )
 
             elif isinstance(node, dict):
-                # Folder node
                 for folder_title, children in node.items():
                     if not isinstance(folder_title, str):
-                        log.warning(
-                            f"⚠️ Skipping non-string folder title: {folder_title}"
-                        )
+                        log.warning(f"⚠️ Skipping non-string folder title: {folder_title}")
                         continue
 
-                    log.debug(f"📁 Creating folder page for: {folder_title}")
                     folder_id = self.create_or_update_page(
                         title=folder_title,
                         body="",
@@ -758,9 +753,7 @@ class ConfluencePlugin(BasePlugin):
         if unmatched_pages:
             log.info("\n📋 Summary of unmatched nav titles:")
             for orig, key, matches in unmatched_pages:
-                log.info(
-                    f"  - '{orig}' → '{key}' | closest matches: {matches if matches else 'None'}"
-                )
+                log.info(f"  - '{orig}' → '{key}' | closest matches: {matches if matches else 'None'}")
 
         all_keys = set(self.page_lookup.keys())
         unused_keys = all_keys - matched_keys
