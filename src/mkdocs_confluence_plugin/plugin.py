@@ -19,6 +19,7 @@ from mkdocs.structure.pages import Page
 from md2cf.confluence_renderer import ConfluenceRenderer
 from atlassian import Confluence
 from urllib.parse import quote_plus
+from typing import Optional
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run."
@@ -690,48 +691,26 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-    def build_and_publish_tree(self, nav_items, parent_id):
-        """
-        Recursively create pages in Confluence from nav structure.
-
-        nav_items: list of str or dict (folder title -> children list)
-        parent_id: Confluence page ID to publish under
-        """
-        for item in nav_items:
-            if isinstance(item, dict):
-                # Folder page
-                for folder_title, children in item.items():
-                    folder_key = self.normalize_title_key(folder_title)
-                    folder_content = self.page_lookup.get(
-                        folder_key, ""
-                    )  # usually empty for folders
-
-                    self.logger.info(
-                        f"Creating folder page '{folder_title}' under parent ID {parent_id}"
-                    )
-                    folder_page_id = self.create_or_update_page(
-                        folder_title, parent_id, folder_content, folder=True
-                    )
-                    self.build_and_publish_tree(children, folder_page_id)
-
-            else:
-                # Leaf page (content page)
-                page_title = item
-                page_key = self.normalize_title_key(page_title)
-                page_content = self.page_lookup.get(page_key, None)
-
-                if page_content is None or not page_content.strip():
-                    self.logger.warning(
-                        f"🚫 Page content for '{page_title}' (key '{page_key}') not found or empty."
-                    )
-                    page_content = ""  # fallback empty content
-
-                self.logger.info(
-                    f"Creating content page '{page_title}' under parent ID {parent_id}"
-                )
-                self.create_or_update_page(
-                    page_title, parent_id, page_content, folder=False
-                )
+    def build_and_publish_tree(self, nav_tree: list, parent_id: Optional[str] = None):
+        for entry in nav_tree:
+            if isinstance(entry, str):
+                # Simple page (leaf node)
+                page = self.page_lookup.get(entry.lower())
+                if not page:
+                    log.warning(f"⚠️ Page '{entry}' not found in lookup. Skipping.")
+                    continue
+                page_id = self.create_or_update_page(page, parent_id)
+            elif isinstance(entry, dict):
+                # Folder or section with children
+                folder_title, children = list(entry.items())[0]
+                folder_path = folder_title.lower()
+                folder_page = {
+                    "title": folder_title,
+                    "is_folder": True,
+                    "source_path": folder_path,  # Used for consistent lookup/debugging
+                }
+                folder_id = self.create_or_update_page(folder_page, parent_id)
+                self.build_and_publish_tree(children, parent_id=folder_id)
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -748,70 +727,51 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def create_or_update_page(self, title, parent_id, content=None, folder=False):
-        """
-        Create or update a Confluence page.
+    def create_or_update_page(self, page: dict, parent_id: Optional[str] = None):
+        title = page["title"]
+        is_folder = page.get("is_folder", False)
+        abs_src_path = page.get("source_path", "").lower()
+        body = ""
+        page_meta = {}
 
-        :param title: Title of the page
-        :param parent_id: Parent Confluence page ID
-        :param content: dict with keys 'title', 'content', 'parent_id', 'source_path'
-        :param folder: Whether this is a folder page (True = no content body)
-        :return: Confluence page ID
-        """
-        normalized_title = self._normalize_title(title)
-        content_body = content.get("content", "") if isinstance(content, dict) else ""
-
-        if folder:
-            # Use a blank body for folder pages
-            content_body = ""
-
-        existing_page_id = self.find_page_id(title, parent_id)
+        if not is_folder:
+            page_data = self.page_lookup.get(abs_src_path)
+            if page_data:
+                body = page_data["body"]
+                page_meta = page_data.get("meta", {})
+            else:
+                log.warning(
+                    f"🚫 Page content for '{title}' (key '{abs_src_path}') not found or empty. "
+                    f"Available keys: {list(self.page_lookup.keys())[:5]}..."
+                )
 
         if self.dryrun:
             self.dryrun_log(
-                f"[DRYRUN] Would {'update' if existing_page_id else 'create'} page: '{title}' under parent ID {parent_id}"
+                f"🚧 Would create/update page: '{title}', parent_id='{parent_id}', is_folder={is_folder}"
             )
-            return "DRYRUN_PAGE_ID"
+            return None
 
-        if existing_page_id:
-            # Update existing page
-            version = self.page_versions.get(title, 1)
-            self.logger.info(
-                f"🔄 Updating page '{title}' (ID: {existing_page_id}) to version {version + 1}"
-            )
-            result = self.confluence.update_page(
-                existing_page_id,
-                title,
-                content_body,
-                version=version + 1,
-            )
-            if result:
-                self.page_ids[title] = existing_page_id
-                self.page_versions[title] = version + 1
-                return existing_page_id
-            else:
-                self.logger.warning(
-                    f"⚠️ Failed to update page '{title}' (ID: {existing_page_id})"
-                )
-                return existing_page_id
-        else:
-            # Create new page
-            self.logger.info(f"🆕 Creating page '{title}' under parent ID {parent_id}")
-            result = self.confluence.create_page(
-                self.space,
-                title,
-                content_body,
+        existing_page = self.find_existing_page(title, parent_id)
+        if existing_page:
+            log.info(f"✏️ Updating page: {title} (id: {existing_page['id']})")
+            self.confluence.update_page(
+                page_id=existing_page["id"],
+                title=title,
+                body=body if not is_folder else "",
                 parent_id=parent_id,
-                representation="storage",
+                metadata=page_meta,
             )
-            if result and "id" in result:
-                page_id = result["id"]
-                self.page_ids[title] = page_id
-                self.page_versions[title] = 1
-                return page_id
-            else:
-                self.logger.warning(f"⚠️ Failed to create page '{title}'")
-                return None
+            return existing_page["id"]
+        else:
+            log.info(f"🆕 Creating page: {title} (parent_id: {parent_id})")
+            new_page_id = self.confluence.create_page(
+                space=self.space,
+                title=title,
+                body=body if not is_folder else "",
+                parent_id=parent_id,
+                metadata=page_meta,
+            )
+            return new_page_id
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)
