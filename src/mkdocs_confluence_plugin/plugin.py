@@ -727,51 +727,76 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
-    def create_or_update_page(self, page: dict, parent_id: Optional[str] = None):
-        title = page["title"]
-        is_folder = page.get("is_folder", False)
-        abs_src_path = page.get("source_path", "").lower()
-        body = ""
-        page_meta = {}
+    def create_or_update_page(
+        self,
+        title,
+        body,
+        parent_id=None,
+        is_folder=False,
+        attachments=None,
+        abs_src_path=None,
+    ):
+        """Create or update a Confluence page. Handles folders, dry run, and logging."""
 
-        if not is_folder:
-            page_data = self.page_lookup.get(abs_src_path)
-            if page_data:
-                body = page_data["body"]
-                page_meta = page_data.get("meta", {})
-            else:
-                log.warning(
-                    f"🚫 Page content for '{title}' (key '{abs_src_path}') not found or empty. "
-                    f"Available keys: {list(self.page_lookup.keys())[:5]}..."
-                )
+        # Normalized key used for page lookup (helps with fallback and structure mapping)
+        key = self.normalize_title_key(title)
 
-        if self.dryrun:
-            self.dryrun_log(
-                f"🚧 Would create/update page: '{title}', parent_id='{parent_id}', is_folder={is_folder}"
+        # Determine if page exists under correct parent
+        existing_page = None
+        if key in self.page_lookup:
+            page_data = self.page_lookup[key]
+            if str(page_data.get("parent_id")) == str(parent_id):
+                existing_page = page_data.get("id")
+
+        # Log preview info
+        body_preview = body[:60].replace("\n", " ") + ("..." if len(body) > 60 else "")
+        self.dryrun_log(
+            f"{'📁' if is_folder else '📄'} {'Folder' if is_folder else 'Page'}: {title} "
+            f"(Parent ID: {parent_id}, Exists: {bool(existing_page)}, BodyLen: {len(body)}, Preview: '{body_preview}')"
+        )
+
+        # Dry run: skip actual creation
+        if self.config["dryrun"]:
+            self.pages.append(
+                {
+                    "title": title,
+                    "body": body,
+                    "parent_id": parent_id,
+                    "is_folder": is_folder,
+                    "abs_src_path": abs_src_path,
+                }
             )
-            return None
+            return
 
-        existing_page = self.find_existing_page(title, parent_id)
+        # Create or update
         if existing_page:
-            log.info(f"✏️ Updating page: {title} (id: {existing_page['id']})")
-            self.confluence.update_page(
-                page_id=existing_page["id"],
-                title=title,
-                body=body if not is_folder else "",
-                parent_id=parent_id,
-                metadata=page_meta,
-            )
-            return existing_page["id"]
+            # Update
+            log.info(f"✏️ Updating existing page '{title}' (ID: {existing_page})")
+            self.api.update_page(existing_page, title, body)
+            page_id = existing_page
         else:
-            log.info(f"🆕 Creating page: {title} (parent_id: {parent_id})")
-            new_page_id = self.confluence.create_page(
-                space=self.space,
-                title=title,
-                body=body if not is_folder else "",
-                parent_id=parent_id,
-                metadata=page_meta,
-            )
-            return new_page_id
+            # Create
+            log.info(f"🆕 Creating new page '{title}' (Parent ID: {parent_id})")
+            page_id = self.api.create_page(self.space, title, body, parent_id)
+
+        # Sync attachments
+        if attachments:
+            log.info(f"📎 Syncing {len(attachments)} attachments for '{title}'")
+            for file_path in attachments:
+                self.api.attach_file(page_id, file_path)
+
+        # Store in lookup for future reference
+        self.page_lookup[key] = {
+            "id": page_id,
+            "title": title,
+            "parent_id": parent_id,
+            "is_folder": is_folder,
+            "abs_src_path": abs_src_path,
+            "body": body,
+        }
+
+        # Append to published pages list
+        self.pages.append(self.page_lookup[key])
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)
