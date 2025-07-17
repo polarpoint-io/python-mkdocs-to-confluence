@@ -402,8 +402,11 @@ class ConfluencePlugin(BasePlugin):
             return f"{self.config['host_url'].rstrip('/')}/pages/viewpage.action?pageId={page_id}"
         return None
 
+
     def page_exists(self, title, parent_id=None):
-        return self.find_page_id(title, parent_id) is not None
+        page_id = self.find_page_id(title, parent_id)
+        return (page_id is not None, page_id)
+
 
     def _normalize_title(self, title: str) -> str:
         """
@@ -692,25 +695,54 @@ class ConfluencePlugin(BasePlugin):
         log.info("✅ End of debug dump.")
 
     def build_and_publish_tree(self, nav_tree: list, parent_id: Optional[str] = None):
-        for entry in nav_tree:
-            if isinstance(entry, str):
-                # Simple page (leaf node)
-                page = self.page_lookup.get(entry.lower())
-                if not page:
-                    log.warning(f"⚠️ Page '{entry}' not found in lookup. Skipping.")
+        """Recursively walk the navigation tree and publish each page to Confluence.
+
+        Args:
+            nav_tree (list): The MkDocs navigation structure.
+            parent_id (str): Confluence parent page ID.
+        """
+        for node in nav_tree:
+            if isinstance(node, str):
+                # Leaf node - regular content page
+                page_info = self.page_lookup.get(node)
+                if not page_info:
+                    log.warning(f"⚠️ No page data found for '{node}'. Skipping.")
                     continue
-                page_id = self.create_or_update_page(page, parent_id)
-            elif isinstance(entry, dict):
-                # Folder or section with children
-                folder_title, children = list(entry.items())[0]
-                folder_path = folder_title.lower()
-                folder_page = {
-                    "title": folder_title,
-                    "is_folder": True,
-                    "source_path": folder_path,  # Used for consistent lookup/debugging
-                }
-                folder_id = self.create_or_update_page(folder_page, parent_id)
-                self.build_and_publish_tree(children, parent_id=folder_id)
+
+                body = page_info.get("body", "")
+                abs_src_path = page_info.get("abs_src_path")
+                attachments = (
+                    self.attachments.get(abs_src_path, []) if abs_src_path else []
+                )
+                page_id = self.create_or_update_page(
+                    title=page_info["title"],
+                    body=body,
+                    parent_id=parent_id,
+                    is_folder=False,
+                    attachments=attachments,
+                    abs_src_path=abs_src_path,
+                )
+
+            elif isinstance(node, dict):
+                # Folder node
+                for folder_title, children in node.items():
+                    if not isinstance(folder_title, str):
+                        log.warning(
+                            f"⚠️ Skipping non-string folder title: {folder_title}"
+                        )
+                        continue
+
+                    log.debug(f"📁 Creating folder page for: {folder_title}")
+                    folder_id = self.create_or_update_page(
+                        title=folder_title,
+                        body="",
+                        parent_id=parent_id,
+                        is_folder=True,
+                    )
+                    self.build_and_publish_tree(children, parent_id=folder_id)
+
+            else:
+                log.warning(f"⚠️ Unknown node type in nav: {node}")
 
     def find_or_create_folder_page(self, title, parent_id):
         page_id = self.find_page_id(title, parent_id)
@@ -727,76 +759,46 @@ class ConfluencePlugin(BasePlugin):
 
         return self.create_page(title, "", parent_id)
 
+
     def create_or_update_page(
         self,
         title,
-        body,
+        body="",
         parent_id=None,
         is_folder=False,
         attachments=None,
         abs_src_path=None,
     ):
         """Create or update a Confluence page. Handles folders, dry run, and logging."""
+        if not title:
+            log.warning("⚠️ create_or_update_page: Missing title. Skipping.")
+            return None
 
-        # Normalized key used for page lookup (helps with fallback and structure mapping)
         key = self.normalize_title_key(title)
+        page_exists, existing_id = self.page_exists(title, parent_id)
 
-        # Determine if page exists under correct parent
-        existing_page = None
-        if key in self.page_lookup:
-            page_data = self.page_lookup[key]
-            if str(page_data.get("parent_id")) == str(parent_id):
-                existing_page = page_data.get("id")
-
-        # Log preview info
-        body_preview = body[:60].replace("\n", " ") + ("..." if len(body) > 60 else "")
-        self.dryrun_log(
-            f"{'📁' if is_folder else '📄'} {'Folder' if is_folder else 'Page'}: {title} "
-            f"(Parent ID: {parent_id}, Exists: {bool(existing_page)}, BodyLen: {len(body)}, Preview: '{body_preview}')"
-        )
-
-        # Dry run: skip actual creation
-        if self.config["dryrun"]:
-            self.pages.append(
-                {
-                    "title": title,
-                    "body": body,
-                    "parent_id": parent_id,
-                    "is_folder": is_folder,
-                    "abs_src_path": abs_src_path,
-                }
-            )
-            return
-
-        # Create or update
-        if existing_page:
-            # Update
-            log.info(f"✏️ Updating existing page '{title}' (ID: {existing_page})")
-            self.api.update_page(existing_page, title, body)
-            page_id = existing_page
+        if page_exists:
+            page_id = existing_id
+            log.info(f"📝 Page exists: '{title}' (ID={page_id}) — updating.")
+            if not self.dryrun:
+                self.confluence.update_page(page_id, title, body)
         else:
-            # Create
-            log.info(f"🆕 Creating new page '{title}' (Parent ID: {parent_id})")
-            page_id = self.api.create_page(self.space, title, body, parent_id)
+            log.info(f"🆕 Page does not exist: '{title}' — creating.")
+            if not self.dryrun:
+                created = self.confluence.create_page(self.space, title, body, parent_id)
+                page_id = created.get("id")
+            else:
+                page_id = f"DRYRUN-{title}"
+                self.dryrun_log(f"Would create page '{title}' under parent ID {parent_id}")
 
-        # Sync attachments
-        if attachments:
-            log.info(f"📎 Syncing {len(attachments)} attachments for '{title}'")
-            for file_path in attachments:
-                self.api.attach_file(page_id, file_path)
+        # Attachments handling
+        if attachments and abs_src_path and not self.dryrun:
+            self.sync_page_attachments(page_id, abs_src_path, attachments)
 
-        # Store in lookup for future reference
-        self.page_lookup[key] = {
-            "id": page_id,
-            "title": title,
-            "parent_id": parent_id,
-            "is_folder": is_folder,
-            "abs_src_path": abs_src_path,
-            "body": body,
-        }
+        self.page_ids[key] = page_id
+        return page_id
 
-        # Append to published pages list
-        self.pages.append(self.page_lookup[key])
+
 
     def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
         norm_title = self._normalize_title(page_title)

@@ -199,8 +199,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
         "username": "user",
         "password": "pass",
     }
-    plugin.space = plugin.config["space"]  # use `space` here as well
-
+    plugin.space = plugin.config["space"]
     plugin.parent_page_id = None
 
     class DummyConfluence:
@@ -209,7 +208,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
             self.updated_pages = []
 
         def create_page(self, space, title, body, parent_id=None, representation=None):
-            self.created_pages.append(title)
+            self.created_pages.append((title, parent_id))
             return {"id": "123"}
 
         def update_page(self, page_id, title, body, version=None):
@@ -221,11 +220,11 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
 
     plugin.confluence = DummyConfluence()
     plugin.log = Mock()
-    plugin.logger = plugin.log  # ensure logger exists
+    plugin.logger = plugin.log
 
     plugin.page_ids = {}
     plugin.page_versions = {}
-    plugin.pages = [{"title": "New Page", "body": "<p>body</p>"}]
+    plugin.pages = [{"title": "New Page", "body": "<p>body</p>", "is_folder": False}]
     plugin.tab_nav = ["New Page"]
     plugin.page_lookup = {
         "New Page": {
@@ -240,6 +239,8 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.sync_page_attachments = Mock()
 
     plugin.on_post_build(config={}, files=[])
+
+    assert plugin.confluence.created_pages == [("New Page", None)]
 
 
 
@@ -310,13 +311,16 @@ def test_get_page_url_returns_correct_url(plugin):
         == "https://example.atlassian.net/wiki/rest/api/content/pages/viewpage.action?pageId=45678"
     )
 
-
 def test_page_exists_returns_true_if_found(plugin):
     plugin.find_page_id = Mock(return_value="123")
-    assert plugin.page_exists("Existing Page", parent_id=None) is True
+    exists, page_id = plugin.page_exists("Existing Page", parent_id=None)
+    assert exists is True
+    assert page_id == "123"
 
     plugin.find_page_id = Mock(return_value=None)
-    assert plugin.page_exists("Missing Page", parent_id=None) is False
+    exists, page_id = plugin.page_exists("Missing Page", parent_id=None)
+    assert exists is False
+    assert page_id is None
 
 
 def test_get_file_sha1(tmp_path, plugin):
