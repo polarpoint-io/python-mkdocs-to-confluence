@@ -80,6 +80,9 @@ class ConfluencePlugin(BasePlugin):
         self.dryrun = False
         self.tab_nav = []
 
+    def normalize_title_key(self, title: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
     def on_config(self, config):
         plugin_cfg = self.config
         self.space = self.config.get("space")
@@ -172,6 +175,8 @@ class ConfluencePlugin(BasePlugin):
             )
 
         return config
+
+
 
     def on_pre_build(self, config, **kwargs):
         if not self.enabled:
@@ -353,11 +358,7 @@ class ConfluencePlugin(BasePlugin):
         print(f"✅ Adding footer: {footer.strip()}")
         return html + footer
 
-    def normalize_title_key(self, title: str) -> str:
-        """Normalize title to generate lookup key consistent with page_lookup keys."""
-        import re
 
-        return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
@@ -694,81 +695,77 @@ class ConfluencePlugin(BasePlugin):
 
         log.info("✅ End of debug dump.")
 
-    def build_and_publish_tree(self, nav_tree: list, parent_id: Optional[str] = None):
-        """Recursively walk the navigation tree and publish each page to Confluence.
-
-        Args:
-            nav_tree (list): The MkDocs navigation structure.
-            parent_id (str): Confluence parent page ID.
-        """
-        from difflib import get_close_matches
-
-        unmatched_pages = []
-        matched_keys = set()
+    def build_and_publish_tree(
+        self, nav_tree: list, parent_id: Optional[str] = None, path_stack: list = None
+    ):
+        if path_stack is None:
+            path_stack = []
 
         for node in nav_tree:
             if isinstance(node, str):
-                lookup_key = self.normalize_title_key(node)
-                page_info = self.page_lookup.get(lookup_key)
+                path_stack_full = path_stack + [node]
+                lookup_key = self.normalize_title_key("/".join(path_stack_full))
 
+                page_info = self.page_lookup.get(lookup_key)
                 if not page_info:
                     possible_keys = list(self.page_lookup.keys())
                     matches = get_close_matches(lookup_key, possible_keys, n=3)
-                    unmatched_pages.append((node, lookup_key, matches))
                     log.warning(
                         f"⚠️ No page data found for '{node}' → tried key '{lookup_key}'"
                     )
                     log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
                     continue
 
-                matched_keys.add(lookup_key)
                 body = page_info.get("body", "")
                 abs_src_path = page_info.get("abs_src_path")
                 attachments = (
                     self.attachments.get(abs_src_path, []) if abs_src_path else []
                 )
+
                 page_id = self.create_or_update_page(
-                    title=page_info["title"],
+                    title=page_info.get("title", node),
                     body=body,
                     parent_id=parent_id,
-                    is_folder=False,
                     attachments=attachments,
-                    abs_src_path=abs_src_path,
+                    abs_src_path=abs_src_path
                 )
+                self.sync_page_attachments(page_id, attachments)
 
             elif isinstance(node, dict):
-                for folder_title, children in node.items():
-                    if not isinstance(folder_title, str):
-                        log.warning(
-                            f"⚠️ Skipping non-string folder title: {folder_title}"
-                        )
-                        continue
+                for folder, children in node.items():
+                    folder_title = folder
+                    path_stack_full = path_stack + [folder_title]
+                    folder_lookup_key = self.normalize_title_key("/".join(path_stack_full))
+
+                    folder_page_info = self.page_lookup.get(
+                        folder_lookup_key,
+                        {
+                            "title": folder_title,
+                            "body": "",
+                            "is_folder": True,
+                        },
+                    )
 
                     folder_id = self.create_or_update_page(
-                        title=folder_title,
-                        body="",
+                        title=folder_page_info.get("title", folder_title),
+                        body=folder_page_info.get("body", ""),
                         parent_id=parent_id,
-                        is_folder=True,
+                        is_folder=folder_page_info.get("is_folder", True)
                     )
-                    self.build_and_publish_tree(children, parent_id=folder_id)
+                    self.build_and_publish_tree(
+                        children, parent_id=folder_id, path_stack=path_stack_full
+                    )
 
-            else:
-                log.warning(f"⚠️ Unknown node type in nav: {node}")
-
-        if unmatched_pages:
-            log.info("\n📋 Summary of unmatched nav titles:")
-            for orig, key, matches in unmatched_pages:
-                log.info(
-                    f"  - '{orig}' → '{key}' | closest matches: {matches if matches else 'None'}"
-                )
-
-        all_keys = set(self.page_lookup.keys())
-        unused_keys = all_keys - matched_keys
-        if unused_keys:
-            log.info("\n📄 Orphan .md files in 'docs/' not linked from nav:")
-            for key in sorted(unused_keys):
-                title = self.page_lookup[key]["title"]
-                log.info(f"  - {title}  (key: {key})")
+    def build_page_lookup(self):
+        self.page_lookup = {}
+        for page in self.pages:
+            abs_path = page.get("abs_src_path")
+            if not abs_path:
+                continue
+            rel_path = os.path.relpath(abs_path, "docs").replace("\\", "/")
+            path_parts = rel_path.replace(".md", "").split("/")
+            normalized_key = self.normalize_title_key("/".join(path_parts))
+            self.page_lookup[normalized_key] = page
 
     def create_or_update_page(
         self,

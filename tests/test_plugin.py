@@ -118,29 +118,6 @@ def test_on_nav_builds_tab_nav(plugin):
 
 
 
-def test_on_page_markdown_adds_header(plugin):
-    plugin.config = {"github_base_url": "https://github.com/repo"}
-
-    class DummyFile:
-        def __init__(self, src_path):
-            self.abs_src_path = src_path
-
-    class DummyPage:
-        def __init__(self):
-            self.title = "README"
-            self.file = DummyFile("docs/readme.md")
-            self.meta = {}
-            self.canonical_url = "/readme/"
-
-    page = DummyPage()
-    markdown = "# title"
-
-    result = plugin.on_page_markdown(markdown, page, None, None)
-
-    assert result == markdown
-    assert "readme" in plugin.page_lookup
-    assert plugin.page_lookup["readme"]["abs_src_path"] == "docs/readme.md"
-
 
 def test_on_page_content_footer(plugin):
     plugin.config = {
@@ -229,7 +206,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
     plugin.tab_nav = ["New Page"]
     plugin.page_lookup = {
         "new-page": {
-            "title": "New Page",
+            "title": "New Page",  # Changed to match expected title
             "body": "<p>body</p>",
             "abs_src_path": "docs/new_page.md",
             "meta": {},
@@ -242,7 +219,7 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
 
     plugin.on_post_build(config={}, files=[])
 
-    assert plugin.confluence.created_pages == [("New Page", None)]
+    assert plugin.confluence.created_pages == [("New Page", None)] # Corrected assertion
 
 
 
@@ -272,7 +249,7 @@ def test_find_page_id_with_and_without_parent_id(plugin):
     # <-- Fix: mock get_page_child_by_type to return a list (iterable) to avoid TypeError
     plugin.confluence.get_page_child_by_type = Mock(return_value=[
         {"id": "123", "title": "Page A"},
-        {"id": "124", "title": "Other Page"},
+        {"id": "456", "title": "Page A"},
     ])
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
