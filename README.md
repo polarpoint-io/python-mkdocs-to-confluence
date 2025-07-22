@@ -1,6 +1,5 @@
 # MkDocs Confluence Plugin
 
-**Version:** 1.25.8  
 **Python:** >=3.7  
 
 A MkDocs plugin that automatically publishes your documentation to Confluence, with advanced navigation matching and semantic page resolution.
@@ -45,10 +44,14 @@ python -m build
 pip install dist/mkdocs_confluence_plugin-*.whl
 ```
 
-### Install dependencies
+### Additional MkDocs Plugins (Optional)
+
+Install additional MkDocs plugins as needed for your documentation:
 
 ```shell
-pip install -r requirements.txt
+# Popular MkDocs plugins for enhanced documentation
+pip install mkdocs-material mkdocs-awesome-nav
+pip install mkdocs-build-plantuml-plugin mkdocs-git-revision-date-localized-plugin
 ```
 
 ## Python Requirements
@@ -81,6 +84,13 @@ Install with: `pip install -e ".[dev]"`
 - **coverage** - Coverage reporting
 - **md2cf** - Markdown conversion
 - **atlassian-python-api** - Confluence integration
+
+### Recommended MkDocs Plugins
+These plugins work well with the Confluence plugin but are installed separately:
+- **mkdocs-awesome-nav** - Advanced navigation management with `.nav.yml` files
+- **mkdocs-material** - Modern Material Design theme
+- **mkdocs-build-plantuml-plugin** - PlantUML diagram support
+- **mkdocs-git-revision-date-localized-plugin** - Git-based page timestamps
 
 ## Configuration
 
@@ -130,7 +140,7 @@ plugins:
    ```bash
    export CONFLUENCE_USERNAME=your-email@domain.com
    export CONFLUENCE_PASSWORD=your-api-token
-   export MKDOCS_TO_CONFLUENCE=true
+   export MKDOCS_TO_CONFLUENCE=1
    ```
 3. Build and publish your documentation:
    ```bash
@@ -144,24 +154,57 @@ For complex navigation structures, use `mkdocs-awesome-nav` with a `.nav.yml` fi
 ```yaml
 # docs/.nav.yml
 nav:
-  - Home: index.md
-  - Technical Practices:
-    - Overview: technical-practices/index.md
-    - ADRs: 
-      - All ADRs: technical-practices/architecture_design_records/all_adrs/index.md
-      - "Use ADRs": technical-practices/architecture_design_records/all_adrs/0001-use-adrs.md
-  - Development:
-    - Local Setup: development/local-development.md
-    - GitHub Workflow: development/github-workflow.md
+  - Index: index.md
+
+  - Support:
+      - support/*.md
+      - support/**/*.md
+
+  - Technical-Practices:
+      - Architecture Design Records:
+          - technical-practices/architecture_design_records/*.md
+          - technical-practices/architecture_design_records/**/*.md
+      - Code-Maintainability:
+          - technical-practices/code-maintainability/*.md
+          - technical-practices/code-maintainability/**/*.md
+      - Continuous-Delivery:
+          - technical-practices/continuous-delivery/*.md
+          - technical-practices/continuous-delivery/**/*.md
+      - Monitoring-Observability:
+          - technical-practices/monitoring-observability/*.md
+          - technical-practices/monitoring-observability/**/*.md
+
+  - Template Files:
+      - template_files/*.md
+      - template_files/**/*.md
 ```
 
 ### Environment Setup
 
-Use the provided setup script for consistent environment configuration:
+Set up the required environment variables for Confluence authentication and plugin configuration:
 
 ```bash
-source setExports.sh
+# Required for Confluence authentication
+export CONFLUENCE_USERNAME="your-email@domain.com"
+export CONFLUENCE_PASSWORD="your-confluence-api-token"
+
+# Plugin enablement
+export MKDOCS_TO_CONFLUENCE=1
+
+# Optional: Override configuration via environment variables
+export host_url="https://your-domain.atlassian.net/rest/api/content"
+export space_key="YOUR_SPACE_KEY"
+export parent_page_name="Documentation Root"
+export enable_footer="true"
+export dryrun="false"
+export debug="true"
+export verbose="true"
 ```
+
+**Required Environment Variables:**
+- `CONFLUENCE_USERNAME` - Your Confluence/Atlassian email
+- `CONFLUENCE_PASSWORD` - Your Confluence API token (not your login password)
+- `MKDOCS_TO_CONFLUENCE` - Set to `1` or `true` to enable the plugin
 
 ### Dry Run Mode
 
@@ -281,9 +324,14 @@ pre-commit install
 ### Local Development Setup
 
 1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Install the package in development mode: `pip install -e ".[dev]"`
-4. Set up environment variables: `source setExports.sh`
+2. Install the package with development dependencies: `pip install -e ".[dev]"`
+3. Install additional MkDocs plugins if needed: `pip install mkdocs-material mkdocs-awesome-nav`
+4. Set up environment variables:
+   ```bash
+   export CONFLUENCE_USERNAME=your-email@domain.com
+   export CONFLUENCE_PASSWORD=your-api-token
+   export MKDOCS_TO_CONFLUENCE=1
+   ```
 5. Run tests: `python -m pytest tests/`
 
 ### Build System
