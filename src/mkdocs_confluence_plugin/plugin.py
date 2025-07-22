@@ -85,6 +85,85 @@ class ConfluencePlugin(BasePlugin):
     def normalize_title_key(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
 
+    def extract_meaningful_words(self, text: str) -> set:
+        """Extract meaningful words from text, filtering out common prefixes and numbers."""
+        # Remove common prefixes and patterns, but be careful not to damage abbreviations
+        text = re.sub(r"^(kb|rb)-", "", text.lower())  # Only remove kb- and rb- prefixes
+        text = re.sub(r"^docs?-", "", text)  # Remove docs- prefix
+        text = re.sub(r"^\d{4}-?", "", text)  # Remove leading numbers like "0001-"
+
+        # Handle common abbreviations and expand them
+        abbreviations = {
+            'adrs': ['architecture', 'design', 'records', 'decision'],  # Include both design and decision
+            'adr': ['architecture', 'design', 'record', 'decision'],
+            'arch': ['architecture'],
+            'sso': ['single', 'sign', 'on'],
+            'auth': ['authentication', 'authorization', 'auth'],
+            'kb': ['knowledge', 'base'],
+            'rb': ['runbook'],
+            'ci': ['continuous', 'integration'],
+            'cd': ['continuous', 'delivery'],
+            'cicd': ['continuous', 'integration', 'deployment', 'delivery'],
+            'ci/cd': ['continuous', 'integration', 'deployment', 'delivery'],
+            'aws': ['amazon', 'web', 'services'],
+            'api': ['application', 'programming', 'interface'],
+            'apis': ['application', 'programming', 'interface', 'endpoints'],
+            'rest': ['representational', 'state', 'transfer'],
+            'ui': ['user', 'interface'],
+            'db': ['database'],
+            'config': ['configuration'],
+            'admin': ['administration', 'administrator'],
+            'mgmt': ['management'],
+            'ops': ['operations'],
+            'dev': ['development'],
+            'prod': ['production'],
+            'env': ['environment'],
+            'tech': ['technology'],
+            'deploy': ['deployment'],
+            'troubleshoot': ['troubleshooting'],
+            'setup': ['setup', 'configuration'],
+            'guide': ['guide', 'guidelines'],
+        }
+
+        # Split on various separators and filter out short/meaningless words
+        words = re.split(r"[-_\s\./]+", text)
+        meaningful_words = set()
+
+        # First, check if the whole text (lowercased) is an abbreviation
+        text_lower = text.lower()
+        if text_lower in abbreviations:
+            meaningful_words.update(abbreviations[text_lower])
+
+        for word in words:
+            word = word.strip().lower()
+            if len(word) > 2 and not word.isdigit():
+                # Check if word is an abbreviation
+                if word in abbreviations:
+                    meaningful_words.update(abbreviations[word])
+                elif word not in {"the", "and", "for", "with", "are", "not", "how", "can", "you", "but", "was"}:
+                    meaningful_words.add(word)
+            elif len(word) == 2 and word in abbreviations:
+                # Handle 2-letter abbreviations
+                meaningful_words.update(abbreviations[word])
+            elif len(word) >= 1 and word in abbreviations:
+                # Handle any length abbreviations
+                meaningful_words.update(abbreviations[word])
+
+        return meaningful_words
+
+    def calculate_word_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two texts based on shared meaningful words."""
+        words1 = self.extract_meaningful_words(text1)
+        words2 = self.extract_meaningful_words(text2)
+
+        if not words1 or not words2:
+            return 0.0
+
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+
+        return len(intersection) / len(union) if union else 0.0
+
     def on_config(self, config):
         plugin_cfg = self.config
         self.space = self.config.get("space")
@@ -325,7 +404,7 @@ class ConfluencePlugin(BasePlugin):
         title_key = self.normalize_title_key(page.title)
         rendered = self.confluence_mistune(markdown)
 
-        self.page_lookup[title_key] = {
+        page_info = {
             "title": page.title,
             "body": rendered,
             "abs_src_path": abs_src_path,
@@ -333,9 +412,35 @@ class ConfluencePlugin(BasePlugin):
             "url": page.canonical_url,
         }
 
+        # Store under page title key
+        self.page_lookup[title_key] = page_info
+
+        # Create a reverse lookup from normalized title to page info for fuzzy matching
+        if not hasattr(self, 'title_to_page'):
+            self.title_to_page = {}
+        self.title_to_page[title_key] = page_info
+
+        # Also store under file path key for navigation matching
+        if abs_src_path:
+            rel_path = os.path.relpath(abs_src_path, "docs").replace("\\", "/")
+            # Remove .md extension for the path
+            if rel_path.endswith(".md"):
+                rel_path = rel_path[:-3]
+            path_key = self.normalize_title_key(rel_path)
+            self.page_lookup[path_key] = page_info
+
+            # Also store under just the filename (without directory)
+            filename = os.path.basename(rel_path)
+            filename_key = self.normalize_title_key(filename)
+            self.page_lookup[filename_key] = page_info
+
         self.logger.debug(
             f"📥 Cached page content under key '{title_key}' from '{abs_src_path}'"
         )
+        if abs_src_path:
+            self.logger.debug(
+                f"📥 Also cached under path key '{path_key}' and filename key '{filename_key}'"
+            )
         return markdown  # Let MkDocs proceed as usual
 
     def on_page_content(self, html, page, config, files):
@@ -724,31 +829,160 @@ class ConfluencePlugin(BasePlugin):
                             f"✅ Found page using fallback key '{fallback_key}' for '{node}'"
                         )
 
-                    # Strategy 2: Try fuzzy matching if still not found
-                    if not page_info:
-                        possible_keys = list(self.page_lookup.keys())
-                        matches = get_close_matches(lookup_key, possible_keys, n=3)
+                    # Strategy 2: Try removing .md extension if present
+                    if not page_info and node.endswith(".md"):
+                        node_without_ext = node[:-3]  # Remove .md
+                        ext_fallback_key = self.normalize_title_key(node_without_ext)
+                        page_info = self.page_lookup.get(ext_fallback_key)
+                        if page_info:
+                            log.debug(
+                                f"✅ Found page using extension-stripped key '{ext_fallback_key}' for '{node}'"
+                            )
 
-                        # Try to find an exact match from fuzzy results
-                        for match in matches:
-                            if self.page_lookup[match].get("title", "").lower().replace(
-                                " ", "-"
-                            ).replace("_", "-") == node.lower().replace(
-                                " ", "-"
-                            ).replace(
-                                "_", "-"
-                            ):
-                                page_info = self.page_lookup[match]
-                                log.debug(
-                                    f"✅ Found page using fuzzy match '{match}' for '{node}'"
+                    # Strategy 3: Try title-based fuzzy matching first, then fallback to key matching
+                    if not page_info:
+                        # Convert navigation entry to clean format for comparison
+                        node_clean = (
+                            node.replace(".md", "").replace("-", " ").replace("_", " ")
+                        )
+
+                        # Strategy 3a: Priority title matching - direct comparison with page titles
+                        best_match = None
+                        best_similarity = 0.0
+                        
+                        # First pass: Look for title matches with high priority
+                        for key, page_data in self.page_lookup.items():
+                            page_title = page_data.get("title", "")
+                            if not page_title:
+                                continue
+                            
+                            # Calculate similarity between navigation entry and page title
+                            title_similarity = self.calculate_word_similarity(
+                                node_clean, page_title
+                            )
+                            
+                            # Bonus for context matching - check if the page path contains folder context
+                            context_bonus = 0.0
+                            if len(path_stack) > 0:
+                                # Check if any words from the path stack appear in the page key or title
+                                path_context = " ".join(path_stack).lower().replace("-", " ").replace("_", " ")
+                                path_words = set(path_context.split())
+                                
+                                # Check page key for context words
+                                key_words = set(key.lower().replace("-", " ").replace("_", " ").split())
+                                title_words = set(page_title.lower().replace("-", " ").replace("_", " ").split())
+                                
+                                key_context_overlap = len(path_words.intersection(key_words))
+                                title_context_overlap = len(path_words.intersection(title_words))
+                                
+                                if key_context_overlap > 0 or title_context_overlap > 0:
+                                    context_bonus = min(0.2, (key_context_overlap + title_context_overlap) * 0.05)
+                            
+                            # Apply context bonus to title similarity
+                            adjusted_similarity = title_similarity + context_bonus
+                            
+                            # Higher priority for title matches
+                            if adjusted_similarity > best_similarity and adjusted_similarity >= 0.25:
+                                best_similarity = adjusted_similarity
+                                best_match = (key, page_data, "title", title_similarity, context_bonus)
+                        
+                        # Second pass: Only if no good title match, try key matching  
+                        if best_similarity < 0.4:  # Only fallback to key matching if title match is poor
+                            for key, page_data in self.page_lookup.items():
+                                # Calculate similarity between navigation entry and lookup key
+                                key_similarity = self.calculate_word_similarity(
+                                    node_clean, key.replace("-", " ")
                                 )
-                                break
+                                
+                                # Apply same context bonus logic for key matching
+                                context_bonus = 0.0
+                                if len(path_stack) > 0:
+                                    path_context = " ".join(path_stack).lower().replace("-", " ").replace("_", " ")
+                                    path_words = set(path_context.split())
+                                    key_words = set(key.lower().replace("-", " ").replace("_", " ").split())
+                                    key_context_overlap = len(path_words.intersection(key_words))
+                                    if key_context_overlap > 0:
+                                        context_bonus = min(0.2, key_context_overlap * 0.05)
+                                
+                                adjusted_similarity = key_similarity + context_bonus
+                                
+                                if adjusted_similarity > best_similarity and adjusted_similarity >= 0.25:
+                                    best_similarity = adjusted_similarity
+                                    best_match = (key, page_data, "key", key_similarity, context_bonus)
+
+                        if best_match:
+                            page_info = best_match[1]
+                            match_type = best_match[2]
+                            base_similarity = best_match[3]
+                            context_bonus = best_match[4]
+                            log.debug(
+                                f"✅ Found page using {match_type} matching '{best_match[0]}' (similarity: {base_similarity:.3f} + context: {context_bonus:.3f} = {best_similarity:.3f}) for '{node}' in path {path_stack}"
+                            )
+
+                        # Strategy 3b: Enhanced fuzzy matching as final fallback
+                        if not page_info:
+                            possible_keys = list(self.page_lookup.keys())
+                            matches = get_close_matches(
+                                lookup_key, possible_keys, n=10, cutoff=0.6
+                            )
+
+                            # If node has .md extension, also try fuzzy matching without it
+                            if node.endswith(".md"):
+                                node_without_ext = node[:-3]
+                                ext_stripped_key = self.normalize_title_key(
+                                    node_without_ext
+                                )
+                                ext_matches = get_close_matches(
+                                    ext_stripped_key, possible_keys, n=10, cutoff=0.6
+                                )
+                                matches.extend(ext_matches)
+                            # Strategy 3c: Try traditional fuzzy matching on the results
+                            if not page_info:
+                                for match in matches:
+                                    page_title = self.page_lookup[match].get("title", "")
+                                    # More flexible title matching
+                                    normalized_page_title = (
+                                        page_title.lower()
+                                        .replace(" ", "-")
+                                        .replace("_", "-")
+                                    )
+                                    normalized_node = (
+                                        node.lower()
+                                        .replace(" ", "-")
+                                        .replace("_", "-")
+                                        .replace(".md", "")
+                                    )
+
+                                    if (
+                                        normalized_page_title == normalized_node
+                                        or match
+                                        == self.normalize_title_key(
+                                            node_without_ext
+                                            if node.endswith(".md")
+                                            else node
+                                        )
+                                    ):
+                                        page_info = self.page_lookup[match]
+                                        log.debug(
+                                            f"✅ Found page using fuzzy match '{match}' for '{node}'"
+                                        )
+                                        break
 
                         if not page_info:
                             log.warning(
                                 f"⚠️ No page data found for '{node}' → tried key '{lookup_key}' and fallback '{fallback_key}'"
                             )
-                            log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
+                            log.debug(f"🔍 Best similarity was: {best_similarity:.3f} (threshold: 0.25)")
+                            if (
+                                len(self.page_lookup) <= 20
+                            ):  # Only show all keys if there aren't too many
+                                log.debug(
+                                    f"🔍 Available page_lookup keys: {list(self.page_lookup.keys())}"
+                                )
+                            else:
+                                log.debug(
+                                    f"🔍 {len(self.page_lookup)} page_lookup keys available"
+                                )
                             continue
 
                 # Mark this page as processed using the key that actually worked
