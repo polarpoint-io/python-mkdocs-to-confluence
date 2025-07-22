@@ -268,6 +268,10 @@ class ConfluencePlugin(BasePlugin):
 
     def _collect_all_page_names(self, nav_list):
         result = []
+        # Handle the case where nav_list is a dict (for recursive calls)
+        if isinstance(nav_list, dict):
+            nav_list = [nav_list]
+        
         for item in nav_list:
             if isinstance(item, dict):
                 for key, value in item.items():
@@ -311,20 +315,30 @@ class ConfluencePlugin(BasePlugin):
                                 log.info(
                                     f"Creating folder page '{norm_title}' under parent ID {parent_id}"
                                 )
-                                result = self.confluence.create_page(
-                                    space=self.config["space"],
-                                    title=norm_title,
-                                    body="",  # No body for folder pages
-                                    parent_id=parent_id,
-                                    representation="storage",
-                                )
-                                if result and "id" in result:
-                                    folder_page_id = result["id"]
-                                    self.page_ids[norm_key] = folder_page_id
-                                    self.page_versions[norm_key] = 1
-                                    log.info(
-                                        f"✅ Created folder page '{norm_title}' with ID {folder_page_id}"
+                                try:
+                                    result = self.confluence.create_page(
+                                        space=self.config["space"],
+                                        title=norm_title,
+                                        body="",  # No body for folder pages
+                                        parent_id=parent_id,
+                                        representation="storage",
                                     )
+                                    if result and "id" in result:
+                                        folder_page_id = result["id"]
+                                        self.page_ids[norm_key] = folder_page_id
+                                        self.page_versions[norm_key] = 1
+                                        log.info(
+                                            f"✅ Created folder page '{norm_title}' with ID {folder_page_id}"
+                                        )
+                                    else:
+                                        log.warning(
+                                            f"Failed to create folder page '{norm_title}': No ID returned"
+                                        )
+                                except Exception as e:
+                                    log.error(
+                                        f"❌ Failed to create folder page '{norm_title}': {e}"
+                                    )
+                                    folder_page_id = None
                                 else:
                                     log.error(
                                         f"❌ Failed to create folder page '{norm_title}'"
@@ -381,6 +395,10 @@ class ConfluencePlugin(BasePlugin):
 
     def _flatten_nav_with_parents(self, nav, parent=None):
         result = {}
+        # Handle the case where nav is a dict (for recursive calls)
+        if isinstance(nav, dict):
+            nav = [nav]
+        
         for item in nav:
             if isinstance(item, str):
                 result[item] = parent
@@ -501,7 +519,8 @@ class ConfluencePlugin(BasePlugin):
         self.build_and_publish_tree(self.tab_nav, self.parent_page_id)
 
     def get_page_url(self, title, parent_id=None):
-        page_id = self.page_ids.get((title, parent_id))
+        cache_key = self._cache_key(title, parent_id)
+        page_id = self.page_ids.get(cache_key)
         if not page_id:
             page_id = self.find_page_id(title, parent_id)
         if page_id:

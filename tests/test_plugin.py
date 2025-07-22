@@ -1,4 +1,5 @@
 import pytest
+import logging
 
 import sys
 import os
@@ -656,7 +657,7 @@ def test_build_and_publish_tree_with_fallback():
     assert plugin.create_or_update_page.call_count >= 1
 
 
-def test_build_and_publish_tree_fuzzy_matching():
+def test_build_and_publish_tree_title_based_matching():
     plugin = ConfluencePlugin()
     plugin.normalize_title_key = Mock(
         side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
@@ -668,12 +669,34 @@ def test_build_and_publish_tree_fuzzy_matching():
     plugin.create_or_update_page = Mock(return_value="page-123")
     plugin.sync_page_attachments = Mock()
 
-    with patch("mkdocs_confluence_plugin.plugin.get_close_matches") as mock_fuzzy:
-        mock_fuzzy.return_value = ["similar-page-name"]
+    # This should be caught by title-based matching, not fuzzy matching
+    nav_tree = ["Similar Page"]  # Should title-match to "Similar Page Name"
+    plugin.build_and_publish_tree(nav_tree)
 
-        nav_tree = ["Similar Page"]  # Should fuzzy match to "similar-page-name"
+    # Should have called create_or_update_page for the title match
+    plugin.create_or_update_page.assert_called_once()
+
+
+def test_build_and_publish_tree_fuzzy_matching_fallback():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(
+        side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
+    )
+    plugin.page_lookup = {
+        "completely-different-name": {"title": "Completely Different Title", "body": "content"}
+    }
+    plugin.attachments = {}
+    plugin.create_or_update_page = Mock(return_value="page-123")
+    plugin.sync_page_attachments = Mock()
+
+    with patch("mkdocs_confluence_plugin.plugin.get_close_matches") as mock_fuzzy:
+        mock_fuzzy.return_value = ["completely-different-name"]
+
+        # This should NOT be caught by title matching and should fall back to fuzzy
+        nav_tree = ["Very Different Text"]  
         plugin.build_and_publish_tree(nav_tree)
 
+    # Should have called fuzzy matching as fallback
     mock_fuzzy.assert_called()
 
 
@@ -1080,8 +1103,12 @@ def test_clear_cached_page_info(plugin):
 
 
 def test_get_page_url_returns_correct_url(plugin):
-    plugin.config = {"host_url": "https://example.atlassian.net/wiki/rest/api/content"}
-    plugin.page_ids = {("Test Page", None): "45678"}
+    plugin.config = {
+        "host_url": "https://example.atlassian.net/wiki/rest/api/content",
+        "space": "TEST"
+    }
+    # Use correct cache key format: (_normalize_title(title), parent_id)
+    plugin.page_ids = {("testpage", None): "45678"}
     url = plugin.get_page_url("Test Page", parent_id=None)
     assert (
         url
@@ -1212,7 +1239,7 @@ def test_normalize_parent_id():
     assert plugin._normalize_parent_id(123) == "123"
     assert plugin._normalize_parent_id("456") == "456"
     assert plugin._normalize_parent_id(None) is None
-    assert plugin._normalize_parent_id("") == ""
+    assert plugin._normalize_parent_id("") is None  # Empty string should be treated as None
 
 
 def test_collect_all_page_names():
@@ -1353,7 +1380,8 @@ def test_get_page_url_with_cached_id():
     """Test get_page_url with cached page ID"""
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com/wiki"}
-    plugin.page_ids = {("test-page", "parent-123"): "page-456"}
+    # Use the correct cache key format: (_normalize_title(title), parent_id)
+    plugin.page_ids = {("testpage", "parent-123"): "page-456"}
 
     url = plugin.get_page_url("Test Page", parent_id="parent-123")
 
