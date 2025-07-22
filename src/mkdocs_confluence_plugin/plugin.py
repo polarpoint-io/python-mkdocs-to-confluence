@@ -20,6 +20,7 @@ from md2cf.confluence_renderer import ConfluenceRenderer
 from atlassian import Confluence
 from urllib.parse import quote_plus
 from typing import Optional
+from difflib import get_close_matches
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run."
@@ -696,10 +697,14 @@ class ConfluencePlugin(BasePlugin):
         log.info("✅ End of debug dump.")
 
     def build_and_publish_tree(
-        self, nav_tree: list, parent_id: Optional[str] = None, path_stack: list = None
+        self, nav_tree: list, parent_id: Optional[str] = None, path_stack: list = None, processed_pages: set = None
     ):
         if path_stack is None:
             path_stack = []
+        
+        # Initialize processed_pages set at the top level
+        if processed_pages is None:
+            processed_pages = set()
 
         for node in nav_tree:
             if isinstance(node, str):
@@ -715,6 +720,9 @@ class ConfluencePlugin(BasePlugin):
                     )
                     log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
                     continue
+
+                # Mark this page as processed
+                processed_pages.add(lookup_key)
 
                 body = page_info.get("body", "")
                 abs_src_path = page_info.get("abs_src_path")
@@ -746,6 +754,10 @@ class ConfluencePlugin(BasePlugin):
                         },
                     )
 
+                    # Mark folder as processed if it exists in page_lookup
+                    if folder_lookup_key in self.page_lookup:
+                        processed_pages.add(folder_lookup_key)
+
                     folder_id = self.create_or_update_page(
                         title=folder_page_info.get("title", folder_title),
                         body=folder_page_info.get("body", ""),
@@ -753,8 +765,16 @@ class ConfluencePlugin(BasePlugin):
                         is_folder=folder_page_info.get("is_folder", True)
                     )
                     self.build_and_publish_tree(
-                        children, parent_id=folder_id, path_stack=path_stack_full
+                        children, parent_id=folder_id, path_stack=path_stack_full, processed_pages=processed_pages
                     )
+
+        # Report orphan pages (only at the top level to avoid duplicate reporting)
+        if not path_stack:  # Only report orphans at the root level
+            orphan_pages = set(self.page_lookup.keys()) - processed_pages
+            for orphan_key in orphan_pages:
+                orphan_info = self.page_lookup[orphan_key]
+                orphan_title = orphan_info.get("title", orphan_key)
+                log.info(f"📄 Orphan page found: '{orphan_title}' (not referenced in navigation)")
 
     def build_page_lookup(self):
         self.page_lookup = {}
