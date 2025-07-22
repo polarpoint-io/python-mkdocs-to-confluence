@@ -80,6 +80,7 @@ class ConfluencePlugin(BasePlugin):
         self.page_versions = {}
         self.dryrun = False
         self.tab_nav = []
+        self.attachments = {}
 
     def normalize_title_key(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -176,8 +177,6 @@ class ConfluencePlugin(BasePlugin):
             )
 
         return config
-
-
 
     def on_pre_build(self, config, **kwargs):
         if not self.enabled:
@@ -358,8 +357,6 @@ class ConfluencePlugin(BasePlugin):
         footer = f'\n<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>\n'
         print(f"✅ Adding footer: {footer.strip()}")
         return html + footer
-
-
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
@@ -697,11 +694,15 @@ class ConfluencePlugin(BasePlugin):
         log.info("✅ End of debug dump.")
 
     def build_and_publish_tree(
-        self, nav_tree: list, parent_id: Optional[str] = None, path_stack: list = None, processed_pages: set = None
+        self,
+        nav_tree: list,
+        parent_id: Optional[str] = None,
+        path_stack: list = None,
+        processed_pages: set = None,
     ):
         if path_stack is None:
             path_stack = []
-        
+
         # Initialize processed_pages set at the top level
         if processed_pages is None:
             processed_pages = set()
@@ -735,7 +736,7 @@ class ConfluencePlugin(BasePlugin):
                     body=body,
                     parent_id=parent_id,
                     attachments=attachments,
-                    abs_src_path=abs_src_path
+                    abs_src_path=abs_src_path,
                 )
                 self.sync_page_attachments(page_id, attachments)
 
@@ -743,7 +744,9 @@ class ConfluencePlugin(BasePlugin):
                 for folder, children in node.items():
                     folder_title = folder
                     path_stack_full = path_stack + [folder_title]
-                    folder_lookup_key = self.normalize_title_key("/".join(path_stack_full))
+                    folder_lookup_key = self.normalize_title_key(
+                        "/".join(path_stack_full)
+                    )
 
                     folder_page_info = self.page_lookup.get(
                         folder_lookup_key,
@@ -762,10 +765,13 @@ class ConfluencePlugin(BasePlugin):
                         title=folder_page_info.get("title", folder_title),
                         body=folder_page_info.get("body", ""),
                         parent_id=parent_id,
-                        is_folder=folder_page_info.get("is_folder", True)
+                        is_folder=folder_page_info.get("is_folder", True),
                     )
                     self.build_and_publish_tree(
-                        children, parent_id=folder_id, path_stack=path_stack_full, processed_pages=processed_pages
+                        children,
+                        parent_id=folder_id,
+                        path_stack=path_stack_full,
+                        processed_pages=processed_pages,
                     )
 
         # Report orphan pages (only at the top level to avoid duplicate reporting)
@@ -774,7 +780,9 @@ class ConfluencePlugin(BasePlugin):
             for orphan_key in orphan_pages:
                 orphan_info = self.page_lookup[orphan_key]
                 orphan_title = orphan_info.get("title", orphan_key)
-                log.info(f"📄 Orphan page found: '{orphan_title}' (not referenced in navigation)")
+                log.info(
+                    f"📄 Orphan page found: '{orphan_title}' (not referenced in navigation)"
+                )
 
     def build_page_lookup(self):
         self.page_lookup = {}

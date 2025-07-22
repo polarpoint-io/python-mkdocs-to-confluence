@@ -13,14 +13,13 @@ from mkdocs_confluence_plugin.plugin import ConfluencePlugin
 
 
 @pytest.fixture
-
 def plugin():
     p = ConfluencePlugin()
     p.config = {
         "space": "SPACE",
         "parent_page_name": None,
     }
-    p.space = p.config["space"]  
+    p.space = p.config["space"]
     p.page_ids = {}
     p.page_versions = {}
     p.pages = []
@@ -117,8 +116,6 @@ def test_on_nav_builds_tab_nav(plugin):
     assert "Readme" in flat_nav
 
 
-
-
 def test_on_page_content_footer(plugin):
     plugin.config = {
         "github_base_url": "https://github.com/repo",
@@ -155,7 +152,6 @@ def test_on_page_content_footer(plugin):
         def __init__(self):
             self.title = "README"
             self.file = DummyFile("docs/readme.md", "docs/readme.md")
-
 
     page = DummyPage()
     html = "<p>content</p>"
@@ -219,8 +215,9 @@ def test_on_post_build_creates_and_updates(monkeypatch, plugin):
 
     plugin.on_post_build(config={}, files=[])
 
-    assert plugin.confluence.created_pages == [("New Page", None)] # Corrected assertion
-
+    assert plugin.confluence.created_pages == [
+        ("New Page", None)
+    ]  # Corrected assertion
 
 
 def test_find_page_id_with_and_without_parent_id(plugin):
@@ -247,10 +244,12 @@ def test_find_page_id_with_and_without_parent_id(plugin):
     plugin.confluence.get_page_by_id = Mock()
 
     # <-- Fix: mock get_page_child_by_type to return a list (iterable) to avoid TypeError
-    plugin.confluence.get_page_child_by_type = Mock(return_value=[
-        {"id": "123", "title": "Page A"},
-        {"id": "456", "title": "Page A"},
-    ])
+    plugin.confluence.get_page_child_by_type = Mock(
+        return_value=[
+            {"id": "123", "title": "Page A"},
+            {"id": "456", "title": "Page A"},
+        ]
+    )
 
     page_id = plugin.find_page_id("Page A", parent_id="456")
 
@@ -288,6 +287,7 @@ def test_get_page_url_returns_correct_url(plugin):
         == "https://example.atlassian.net/wiki/rest/api/content/pages/viewpage.action?pageId=45678"
     )
 
+
 def test_page_exists_returns_true_if_found(plugin):
     plugin.find_page_id = Mock(return_value="123")
     exists, page_id = plugin.page_exists("Existing Page", parent_id=None)
@@ -317,6 +317,7 @@ def test_build_and_publish_tree_reports_orphan_pages(caplog, plugin):
 
     assert "Orphan Page" in caplog.text
     assert "linked-page" not in caplog.text
+
 
 def test_get_file_sha1(tmp_path, plugin):
     file = tmp_path / "hash.txt"
