@@ -713,17 +713,59 @@ class ConfluencePlugin(BasePlugin):
                 lookup_key = self.normalize_title_key("/".join(path_stack_full))
 
                 page_info = self.page_lookup.get(lookup_key)
-                if not page_info:
-                    possible_keys = list(self.page_lookup.keys())
-                    matches = get_close_matches(lookup_key, possible_keys, n=3)
-                    log.warning(
-                        f"⚠️ No page data found for '{node}' → tried key '{lookup_key}'"
-                    )
-                    log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
-                    continue
 
-                # Mark this page as processed
-                processed_pages.add(lookup_key)
+                # If not found, try fallback strategies
+                if not page_info:
+                    # Strategy 1: Try just the node name
+                    fallback_key = self.normalize_title_key(node)
+                    page_info = self.page_lookup.get(fallback_key)
+                    if page_info:
+                        log.debug(
+                            f"✅ Found page using fallback key '{fallback_key}' for '{node}'"
+                        )
+
+                    # Strategy 2: Try fuzzy matching if still not found
+                    if not page_info:
+                        possible_keys = list(self.page_lookup.keys())
+                        matches = get_close_matches(lookup_key, possible_keys, n=3)
+
+                        # Try to find an exact match from fuzzy results
+                        for match in matches:
+                            if self.page_lookup[match].get("title", "").lower().replace(
+                                " ", "-"
+                            ).replace("_", "-") == node.lower().replace(
+                                " ", "-"
+                            ).replace(
+                                "_", "-"
+                            ):
+                                page_info = self.page_lookup[match]
+                                log.debug(
+                                    f"✅ Found page using fuzzy match '{match}' for '{node}'"
+                                )
+                                break
+
+                        if not page_info:
+                            log.warning(
+                                f"⚠️ No page data found for '{node}' → tried key '{lookup_key}' and fallback '{fallback_key}'"
+                            )
+                            log.debug(f"🔍 Fuzzy matches for '{lookup_key}': {matches}")
+                            continue
+
+                # Mark this page as processed using the key that actually worked
+                if page_info:
+                    # Figure out which key was actually used
+                    if lookup_key in self.page_lookup:
+                        processed_pages.add(lookup_key)
+                    else:
+                        fallback_key = self.normalize_title_key(node)
+                        if fallback_key in self.page_lookup:
+                            processed_pages.add(fallback_key)
+                        else:
+                            # Must have been found via fuzzy matching, find the actual key
+                            for key, info in self.page_lookup.items():
+                                if info == page_info:
+                                    processed_pages.add(key)
+                                    break
 
                 body = page_info.get("body", "")
                 abs_src_path = page_info.get("abs_src_path")
@@ -760,6 +802,15 @@ class ConfluencePlugin(BasePlugin):
                     # Mark folder as processed if it exists in page_lookup
                     if folder_lookup_key in self.page_lookup:
                         processed_pages.add(folder_lookup_key)
+                    else:
+                        # Try fallback for folders too
+                        fallback_folder_key = self.normalize_title_key(folder_title)
+                        if fallback_folder_key in self.page_lookup:
+                            folder_page_info = self.page_lookup[fallback_folder_key]
+                            processed_pages.add(fallback_folder_key)
+                            log.debug(
+                                f"✅ Found folder using fallback key '{fallback_folder_key}' for '{folder_title}'"
+                            )
 
                     folder_id = self.create_or_update_page(
                         title=folder_page_info.get("title", folder_title),

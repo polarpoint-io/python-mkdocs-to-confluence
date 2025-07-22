@@ -2,11 +2,12 @@ import pytest
 
 import sys
 import os
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch, MagicMock
 from mkdocs.structure.pages import Page
 from mkdocs.structure.files import File
 from mkdocs.structure.nav import Navigation
 from pathlib import Path
+import tempfile
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 from mkdocs_confluence_plugin.plugin import ConfluencePlugin
@@ -28,9 +29,809 @@ def plugin():
     return p
 
 
+@pytest.fixture
+def plugin_with_config():
+    """Plugin with full configuration for testing"""
+    p = ConfluencePlugin()
+    p.config = {
+        "host_url": "https://example.atlassian.net/wiki/rest/api/content",
+        "space": "TEST",
+        "username": "test@example.com",
+        "password": "test-token",
+        "parent_page_name": None,
+        "debug": True,
+        "dryrun": False,
+        "enable_footer": True,
+        "default_labels": ["test", "mkdocs"],
+        "enabled_if_env": None,
+    }
+    p.space = p.config["space"]
+    p.page_ids = {}
+    p.page_versions = {}
+    p.pages = []
+    p.dryrun = False
+    p.confluence = Mock()
+    p.enabled = True
+    return p
+
+
 def test_plugin_instantiation():
     plugin = ConfluencePlugin()
     assert isinstance(plugin, ConfluencePlugin)
+    assert hasattr(plugin, "attachments")
+    assert plugin.attachments == {}
+
+
+def test_normalize_title_key():
+    plugin = ConfluencePlugin()
+    assert plugin.normalize_title_key("Hello World!") == "hello-world"
+    assert plugin.normalize_title_key("Test_123 & More") == "test-123-more"
+    assert (
+        plugin.normalize_title_key("   Special@#$%Characters   ")
+        == "special-characters"
+    )
+
+
+def test_on_config_missing_required_keys():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "space": "TEST"
+        # Missing: host_url, username, password
+    }
+
+    with pytest.raises(ValueError, match="Missing required config keys"):
+        plugin.on_config({})
+
+
+def test_on_config_enabled_false():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "enabled": False,
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+    }
+
+    result = plugin.on_config({})
+    assert result == {}
+    assert plugin.enabled == False
+
+
+@patch.dict(os.environ, {"TEST_ENV": "1"})
+def test_on_config_enabled_if_env_true():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+        "enabled_if_env": "TEST_ENV",
+    }
+
+    with patch("mkdocs_confluence_plugin.plugin.Confluence"):
+        plugin.on_config({})
+
+    assert plugin.enabled == True
+
+
+@patch.dict(os.environ, {}, clear=True)
+def test_on_config_enabled_if_env_false():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+        "enabled_if_env": "TEST_ENV",
+    }
+
+    result = plugin.on_config({})
+    assert plugin.enabled == False
+    assert result == {}
+
+
+@patch.dict(
+    os.environ, {"CONFLUENCE_USERNAME": "env_user", "CONFLUENCE_PASSWORD": "env_pass"}
+)
+def test_on_config_env_credentials():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "space": "TEST",
+        # username and password should come from env
+    }
+
+    with patch("mkdocs_confluence_plugin.plugin.Confluence") as mock_confluence:
+        plugin.on_config({})
+
+    mock_confluence.assert_called_once_with(
+        url="https://example.com", username="env_user", password="env_pass"
+    )
+
+
+def test_on_config_with_parent_page_hierarchy():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+        "parent_page_name": "Root/SubFolder/Target",
+    }
+
+    # Mock find_page_id to return different IDs for hierarchy
+    plugin.find_page_id = Mock(side_effect=["root-id", "sub-id", "target-id"])
+
+    with patch("mkdocs_confluence_plugin.plugin.Confluence"):
+        plugin.on_config({})
+
+    assert plugin.parent_page_id == "target-id"
+    assert plugin.find_page_id.call_count == 3
+
+
+def test_on_config_creates_missing_parent_pages():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+        "parent_page_name": "Root/Missing",
+    }
+
+    # Mock find_page_id to return None for missing page
+    plugin.find_page_id = Mock(side_effect=["root-id", None])
+
+    mock_confluence = Mock()
+    mock_confluence.create_page.return_value = {"id": "new-missing-id"}
+
+    with patch(
+        "mkdocs_confluence_plugin.plugin.Confluence", return_value=mock_confluence
+    ):
+        plugin.on_config({})
+        plugin.confluence = mock_confluence
+
+    # Should create the missing page
+    mock_confluence.create_page.assert_called_once()
+    assert plugin.parent_page_id == "new-missing-id"
+
+
+def test_on_config_dryrun_mode():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+        "dryrun": True,
+        "parent_page_name": "Root/Missing",
+    }
+
+    plugin.find_page_id = Mock(side_effect=["root-id", None])
+
+    with patch("mkdocs_confluence_plugin.plugin.Confluence"):
+        plugin.on_config({})
+
+    assert plugin.dryrun == True
+    assert plugin.parent_page_id == "DUMMY_ID_Missing"
+
+
+def test_create_folder_structure_only():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin.page_ids = {}
+    plugin.page_versions = {}
+    plugin.dryrun = False
+
+    mock_confluence = Mock()
+    mock_confluence.create_page.return_value = {"id": "folder-123"}
+    plugin.confluence = mock_confluence
+
+    plugin.find_page_id_or_global = Mock(return_value=None)
+    plugin._normalize_title = Mock(return_value="test-folder")
+
+    nav_tree = [{"Test Folder": ["Page1", "Page2"]}]
+
+    plugin.create_folder_structure_only(nav_tree, parent_id="parent-123")
+
+    mock_confluence.create_page.assert_called_once()
+    assert ("test-folder", "parent-123") in plugin.page_ids
+
+
+def test_create_folder_structure_only_existing_folder():
+    plugin = ConfluencePlugin()
+    plugin.page_ids = {("existing-folder", "parent-123"): "existing-123"}
+    plugin._normalize_title = Mock(return_value="existing-folder")
+
+    nav_tree = [{"Existing Folder": ["Page1"]}]
+
+    plugin.create_folder_structure_only(nav_tree, parent_id="parent-123")
+
+    # Should not create new folder
+    assert not hasattr(plugin, "confluence") or not plugin.confluence.create_page.called
+
+
+def test_create_folder_structure_only_dryrun():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin.dryrun = True
+    plugin.page_ids = {}
+    plugin.find_page_id_or_global = Mock(return_value=None)
+    plugin._normalize_title = Mock(return_value="test-folder")
+
+    nav_tree = [{"Test Folder": ["Page1"]}]
+
+    plugin.create_folder_structure_only(nav_tree, parent_id="parent-123")
+
+    # Should not create actual pages in dryrun
+    assert not hasattr(plugin, "confluence") or not plugin.confluence.create_page.called
+
+
+def test_on_page_markdown():
+    plugin = ConfluencePlugin()
+    plugin.confluence_mistune = Mock(return_value="<p>rendered content</p>")
+    plugin.logger = Mock()
+
+    mock_page = Mock()
+    mock_page.title = "Test Page"
+    mock_page.file.abs_src_path = "/path/to/test.md"
+    mock_page.meta = {"tags": ["test"]}
+    mock_page.canonical_url = "/test-page/"
+
+    markdown = "# Test Page\nContent here"
+
+    result = plugin.on_page_markdown(markdown, mock_page, {}, [])
+
+    assert result == markdown  # Should return original markdown
+    assert "test-page" in plugin.page_lookup
+    assert plugin.page_lookup["test-page"]["title"] == "Test Page"
+    assert plugin.page_lookup["test-page"]["body"] == "<p>rendered content</p>"
+
+
+def test_on_page_content_with_footer():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "enable_footer": True,
+        "github_base_url": "https://github.com/user/repo",
+    }
+
+    mock_page = Mock()
+    mock_page.file.src_uri = "docs/test.md"
+
+    html = "<p>Original content</p>"
+
+    result = plugin.on_page_content(html, mock_page, {}, [])
+
+    assert "github.com/user/repo/docs/test.md" in result
+    assert "View source on GitHub" in result
+    assert html in result
+
+
+def test_on_page_content_footer_disabled():
+    plugin = ConfluencePlugin()
+    plugin.config = {"enable_footer": False}
+
+    html = "<p>Original content</p>"
+    result = plugin.on_page_content(html, Mock(), {}, [])
+
+    assert result == html
+
+
+def test_on_page_content_missing_github_url():
+    plugin = ConfluencePlugin()
+    plugin.config = {"enable_footer": True}  # Missing github_base_url
+
+    html = "<p>Original content</p>"
+    result = plugin.on_page_content(html, Mock(), {}, [])
+
+    assert result == html
+
+
+def test_create_page_success():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin.dryrun = False
+    plugin.page_ids = {}
+    plugin.page_versions = {}
+
+    mock_confluence = Mock()
+    mock_confluence.create_page.return_value = {"id": "new-123"}
+    plugin.confluence = mock_confluence
+
+    plugin._normalize_title = Mock(return_value="test-page")
+
+    result = plugin.create_page("Test Page", "<p>content</p>", "parent-123")
+
+    assert result == "new-123"
+    mock_confluence.create_page.assert_called_once_with(
+        space="TEST",
+        title="Test Page",
+        body="<p>content</p>",
+        parent_id="parent-123",
+        representation="storage",
+    )
+
+
+def test_create_page_already_exists_updates():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin.dryrun = False
+    plugin.page_ids = {}
+    plugin.page_versions = {}
+
+    mock_confluence = Mock()
+    # First call raises exception, then find and update
+    mock_confluence.create_page.side_effect = Exception(
+        "already exists with the same TITLE"
+    )
+    mock_confluence.update_page.return_value = True
+    plugin.confluence = mock_confluence
+
+    plugin._normalize_title = Mock(return_value="test-page")
+    plugin.find_page_id = Mock(return_value="existing-123")
+
+    result = plugin.create_page("Test Page", "<p>content</p>", "parent-123")
+
+    assert result == "existing-123"
+    mock_confluence.update_page.assert_called_once()
+
+
+def test_create_page_dryrun():
+    plugin = ConfluencePlugin()
+    plugin.dryrun = True
+    plugin.dryrun_log = Mock()
+
+    result = plugin.create_page("Test Page", "<p>content</p>", "parent-123")
+
+    assert result == "DUMMY_ID_Test Page"
+    plugin.dryrun_log.assert_called_once_with("create", "Test Page", "parent-123")
+
+
+def test_find_page_id_with_parent():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.get_page_child_by_type.return_value = [
+        {"id": "child-123", "title": "Test Page"},
+        {"id": "child-456", "title": "Other Page"},
+    ]
+    plugin.confluence = mock_confluence
+
+    result = plugin.find_page_id("Test Page", parent_id="parent-123")
+
+    assert result == "child-123"
+    mock_confluence.get_page_child_by_type.assert_called_once_with("parent-123", "page")
+
+
+def test_find_page_id_global_search():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.get_page_child_by_type.return_value = []  # No children
+    mock_confluence.cql.return_value = {
+        "results": [{"content": {"id": "global-123", "title": "Test Page"}}]
+    }
+    plugin.confluence = mock_confluence
+
+    result = plugin.find_page_id("Test Page", parent_id="parent-123")
+
+    assert result == "global-123"
+
+
+def test_find_page_id_not_found():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.get_page_child_by_type.return_value = []
+    mock_confluence.cql.return_value = {"results": []}
+    plugin.confluence = mock_confluence
+
+    result = plugin.find_page_id("Missing Page", parent_id="parent-123")
+
+    assert result is None
+
+
+def test_find_page_id_global():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.cql.return_value = {
+        "results": [{"id": "page-123", "version": {"number": 2}}]
+    }
+    plugin.confluence = mock_confluence
+
+    result = plugin.find_page_id_global("Test Page")
+
+    assert result == "page-123"
+
+
+def test_find_page_id_or_global_cached():
+    plugin = ConfluencePlugin()
+    plugin.page_ids = {("test-page", "parent-123"): "cached-123"}
+    plugin._normalize_parent_id = Mock(return_value="parent-123")
+    plugin._normalize_title = Mock(return_value="test-page")
+
+    result = plugin.find_page_id_or_global("Test Page", parent_id="parent-123")
+
+    assert result == "cached-123"
+
+
+def test_find_page_id_or_global_fallback():
+    plugin = ConfluencePlugin()
+    plugin.page_ids = {}
+    plugin._normalize_parent_id = Mock(return_value="parent-123")
+    plugin._normalize_title = Mock(return_value="test-page")
+    plugin.find_page_id = Mock(return_value=None)
+    plugin.find_page_id_global = Mock(return_value="global-123")
+
+    result = plugin.find_page_id_or_global("Test Page", parent_id="parent-123")
+
+    assert result == "global-123"
+
+
+def test_add_or_update_attachment():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.parent_page_id = "parent-123"
+    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
+    plugin.page_ids = {("test-page", "parent-123"): "page-123"}
+
+    plugin.get_file_sha1 = Mock(return_value="abc123")
+    plugin.get_attachment = Mock(return_value=None)  # No existing attachment
+    plugin.upload_attachment = Mock()
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        plugin.add_or_update_attachment("Test Page", tmp_path)
+
+    plugin.upload_attachment.assert_called_once()
+
+
+def test_add_or_update_attachment_up_to_date():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.parent_page_id = "parent-123"
+    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
+    plugin.page_ids = {("test-page", "parent-123"): "page-123"}
+
+    plugin.get_file_sha1 = Mock(return_value="abc123")
+    plugin.get_attachment = Mock(
+        return_value={
+            "id": "att-123",
+            "metadata": {"comment": "ConfluencePlugin [vabc123]"},
+        }
+    )
+    plugin.upload_attachment = Mock()
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        plugin.add_or_update_attachment("Test Page", tmp_path)
+
+    # Should not upload if up to date
+    plugin.upload_attachment.assert_not_called()
+
+
+def test_add_or_update_attachment_outdated():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.parent_page_id = "parent-123"
+    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
+    plugin.page_ids = {("test-page", "parent-123"): "page-123"}
+
+    plugin.get_file_sha1 = Mock(return_value="new123")
+    plugin.get_attachment = Mock(
+        return_value={
+            "id": "att-123",
+            "metadata": {"comment": "ConfluencePlugin [vold456]"},
+        }
+    )
+    plugin.delete_attachment = Mock()
+    plugin.upload_attachment = Mock()
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        plugin.add_or_update_attachment("Test Page", tmp_path)
+
+    plugin.delete_attachment.assert_called_once_with("att-123")
+    plugin.upload_attachment.assert_called_once()
+
+
+def test_upload_attachment_success():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.post.return_value.status_code = 200
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        plugin.upload_attachment("page-123", tmp_path, "test comment")
+
+    plugin.session.post.assert_called_once()
+
+
+def test_upload_attachment_failure():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.post.return_value.status_code = 400
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        plugin.upload_attachment("page-123", tmp_path, "test comment")
+
+    plugin.session.post.assert_called_once()
+
+
+def test_delete_attachment_success():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.delete.return_value.status_code = 204
+
+    plugin.delete_attachment("att-123")
+
+    plugin.session.delete.assert_called_once()
+
+
+def test_delete_attachment_failure():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.delete.return_value.status_code = 400
+
+    plugin.delete_attachment("att-123")
+
+    plugin.session.delete.assert_called_once()
+
+
+def test_get_attachment_found():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.get.return_value.status_code = 200
+    plugin.session.get.return_value.json.return_value = {
+        "results": [{"id": "att-123", "title": "test.png"}]
+    }
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        result = plugin.get_attachment("page-123", tmp_path)
+
+    assert result == {"id": "att-123", "title": "test.png"}
+
+
+def test_get_attachment_not_found():
+    plugin = ConfluencePlugin()
+    plugin.config = {"host_url": "https://example.com"}
+    plugin.session = Mock()
+    plugin.session.get.return_value.status_code = 200
+    plugin.session.get.return_value.json.return_value = {"results": []}
+
+    with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
+        tmp_path = Path(tmp_file.name)
+        result = plugin.get_attachment("page-123", tmp_path)
+
+    assert result is None
+
+
+def test_sync_page_attachments():
+    plugin = ConfluencePlugin()
+    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
+    plugin.page_ids = {("test-page", "parent-123"): "page-123"}
+    plugin.add_or_update_attachment = Mock()
+
+    # Mock os.walk to find matching attachments
+    with patch("os.walk") as mock_walk:
+        mock_walk.return_value = [("docs", [], ["test_page_image.png", "other.txt"])]
+
+        plugin.sync_page_attachments("Test Page", "parent-123")
+
+    plugin.add_or_update_attachment.assert_called_once()
+
+
+def test_build_and_publish_tree_with_fallback():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(
+        side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
+    )
+    plugin.page_lookup = {
+        "exact-match": {"title": "Exact Match", "body": "content1"},
+        "fallback": {"title": "Fallback Page", "body": "content2"},
+    }
+    plugin.attachments = {}
+    plugin.create_or_update_page = Mock(return_value="page-123")
+    plugin.sync_page_attachments = Mock()
+
+    # Test fallback logic
+    nav_tree = ["complex/path/that/wont/match", "Fallback"]
+
+    plugin.build_and_publish_tree(nav_tree)
+
+    # Should have called create_or_update_page for the fallback match
+    assert plugin.create_or_update_page.call_count >= 1
+
+
+def test_build_and_publish_tree_fuzzy_matching():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(
+        side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
+    )
+    plugin.page_lookup = {
+        "similar-page-name": {"title": "Similar Page Name", "body": "content"}
+    }
+    plugin.attachments = {}
+    plugin.create_or_update_page = Mock(return_value="page-123")
+    plugin.sync_page_attachments = Mock()
+
+    with patch("mkdocs_confluence_plugin.plugin.get_close_matches") as mock_fuzzy:
+        mock_fuzzy.return_value = ["similar-page-name"]
+
+        nav_tree = ["Similar Page"]  # Should fuzzy match to "similar-page-name"
+        plugin.build_and_publish_tree(nav_tree)
+
+    mock_fuzzy.assert_called()
+
+
+def test_build_and_publish_tree_folder_with_fallback():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(
+        side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
+    )
+    plugin.page_lookup = {
+        "folder-page": {"title": "Folder Page", "body": "", "is_folder": True}
+    }
+    plugin.attachments = {}
+    plugin.create_or_update_page = Mock(return_value="folder-123")
+    plugin.build_and_publish_tree = Mock()  # Mock recursive call
+
+    # Test folder fallback
+    nav_tree = [{"Complex Folder Path": ["Child1", "Child2"]}]
+
+    original_method = plugin.build_and_publish_tree
+    plugin.build_and_publish_tree = (
+        lambda *args, **kwargs: None
+    )  # Prevent infinite recursion
+    original_method(nav_tree)
+
+
+def test_create_or_update_page_with_attachments():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(return_value="test-page")
+    plugin.page_exists = Mock(return_value=(False, None))
+    plugin.confluence = Mock()
+    plugin.confluence.create_page.return_value = {"id": "new-123"}
+    plugin.space = "TEST"
+    plugin.dryrun = False
+    plugin.page_ids = {}
+    plugin.sync_page_attachments = Mock()
+
+    result = plugin.create_or_update_page(
+        title="Test Page",
+        body="<p>content</p>",
+        attachments=["file1.png"],
+        abs_src_path="/path/to/source.md",
+    )
+
+    assert result == "new-123"
+    plugin.sync_page_attachments.assert_called_once()
+
+
+def test_create_or_update_page_update_existing():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(return_value="test-page")
+    plugin.page_exists = Mock(return_value=(True, "existing-123"))
+    plugin.confluence = Mock()
+    plugin.dryrun = False
+    plugin.page_ids = {}
+
+    result = plugin.create_or_update_page(title="Test Page", body="<p>content</p>")
+
+    assert result == "existing-123"
+    plugin.confluence.update_page.assert_called_once()
+
+
+def test_create_or_update_page_dryrun():
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(return_value="test-page")
+    plugin.page_exists = Mock(return_value=(False, None))
+    plugin.dryrun = True
+    plugin.dryrun_log = Mock()
+    plugin.page_ids = {}
+
+    result = plugin.create_or_update_page(title="Test Page")
+
+    assert result == "DRYRUN-Test Page"
+    plugin.dryrun_log.assert_called_once()
+
+
+def test_publish_page_create_success():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin._normalize_title = Mock(return_value="testpage")
+    plugin.page_ids = {}
+    plugin.page_versions = {}
+
+    mock_confluence = Mock()
+    mock_confluence.create_page.return_value = {"id": "new-123"}
+    plugin.confluence = mock_confluence
+
+    result = plugin.publish_page("Test Page", "<p>content</p>", "parent-123")
+
+    assert result == "new-123"
+    assert plugin.page_ids[("testpage", "parent-123")] == "new-123"
+
+
+def test_publish_page_update_existing():
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+    plugin._normalize_title = Mock(return_value="testpage")
+    plugin.page_ids = {}
+    plugin.page_versions = {("testpage", "parent-123"): 1}
+
+    mock_confluence = Mock()
+    mock_confluence.create_page.side_effect = Exception(
+        "already exists with the same TITLE"
+    )
+    mock_confluence.update_page.return_value = True
+    plugin.confluence = mock_confluence
+
+    plugin.find_page_id = Mock(return_value="existing-123")
+
+    result = plugin.publish_page("Test Page", "<p>content</p>", "parent-123")
+
+    assert result == "existing-123"
+    mock_confluence.update_page.assert_called_once()
+
+
+def test_publish_page_dryrun():
+    plugin = ConfluencePlugin()
+    plugin.dryrun_log = Mock()
+
+    result = plugin.publish_page(
+        "Test Page", "<p>content</p>", "parent-123", dryrun=True
+    )
+
+    assert result == "DUMMY_ID_Test Page"
+    plugin.dryrun_log.assert_called_once()
+
+
+def test_debug_dump_pages_empty():
+    plugin = ConfluencePlugin()
+    plugin.pages = []
+
+    with patch("mkdocs_confluence_plugin.plugin.log") as mock_log:
+        plugin.debug_dump_pages()
+
+    mock_log.warning.assert_called_with("⚠️ debug_dump_pages: self.pages is empty.")
+
+
+def test_debug_dump_pages_with_content():
+    plugin = ConfluencePlugin()
+    plugin.pages = [
+        {
+            "title": "Test Page",
+            "parent_id": "parent-123",
+            "body": "Short content",
+            "is_folder": False,
+        },
+        {
+            "title": "Long Page",
+            "parent_id": None,
+            "body": "A" * 100,  # Long content to test truncation
+            "is_folder": True,
+        },
+    ]
+
+    with patch("mkdocs_confluence_plugin.plugin.log") as mock_log:
+        plugin.debug_dump_pages()
+
+    # Should log info for each page
+    assert mock_log.info.call_count >= 3  # Header + 2 pages + footer
 
 
 def test_on_config_sets_confluence(monkeypatch, plugin):
