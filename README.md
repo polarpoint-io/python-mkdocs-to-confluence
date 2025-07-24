@@ -1,5 +1,6 @@
 # MkDocs Confluence Plugin
 
+**Version:** 1.26.0  
 **Python:** >=3.7  
 
 A MkDocs plugin that automatically publishes your documentation to Confluence, with advanced navigation matching and semantic page resolution.
@@ -73,7 +74,7 @@ pip install mkdocs-build-plantuml-plugin mkdocs-git-revision-date-localized-plug
 ### Testing Dependencies
 - **pytest==8.0.0** - Testing framework
 - **pytest-mock==3.12.0** - Mocking utilities for tests
-- **coverage==7.4.1** - Code coverage analysis
+- **coverage==7.5** - Code coverage analysis
 - **pre-commit** - Git hook management
 
 ### Development Dependencies (Optional)
@@ -356,7 +357,7 @@ pip install dist/mkdocs_confluence_plugin-*.whl
 The project uses semantic versioning with automated releases:
 - Version managed in `pyproject.toml`
 - Semantic release configured for automated version bumps
-- Current version: 1.25.8
+- Current version: 1.26.0
 
 ### Testing Your Changes
 
