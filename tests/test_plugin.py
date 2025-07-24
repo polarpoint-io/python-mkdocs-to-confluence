@@ -1086,8 +1086,7 @@ TEMPLATE_BODY = "<p> TEMPLATE </p>"
 def test_dryrun_log_logs_info(caplog, plugin):
     with caplog.at_level("INFO"):
         plugin.dryrun_log("create", "Sample Page", parent_id="123")
-    assert "DRYRUN: Would create page 'Sample Page' under parent ID 123" in caplog.text
-
+    assert "DRYRUN: Would create 'Sample Page' under parent ID 123" in caplog.text
 
 def test_normalize_title_strips_punctuation(plugin):
     assert plugin._normalize_title(" Page! Title. ") == "pagetitle"

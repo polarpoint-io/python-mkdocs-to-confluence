@@ -88,41 +88,48 @@ class ConfluencePlugin(BasePlugin):
     def extract_meaningful_words(self, text: str) -> set:
         """Extract meaningful words from text, filtering out common prefixes and numbers."""
         # Remove common prefixes and patterns, but be careful not to damage abbreviations
-        text = re.sub(r"^(kb|rb)-", "", text.lower())  # Only remove kb- and rb- prefixes
+        text = re.sub(
+            r"^(kb|rb)-", "", text.lower()
+        )  # Only remove kb- and rb- prefixes
         text = re.sub(r"^docs?-", "", text)  # Remove docs- prefix
         text = re.sub(r"^\d{4}-?", "", text)  # Remove leading numbers like "0001-"
 
         # Handle common abbreviations and expand them
         abbreviations = {
-            'adrs': ['architecture', 'design', 'records', 'decision'],  # Include both design and decision
-            'adr': ['architecture', 'design', 'record', 'decision'],
-            'arch': ['architecture'],
-            'sso': ['single', 'sign', 'on'],
-            'auth': ['authentication', 'authorization', 'auth'],
-            'kb': ['knowledge', 'base'],
-            'rb': ['runbook'],
-            'ci': ['continuous', 'integration'],
-            'cd': ['continuous', 'delivery'],
-            'cicd': ['continuous', 'integration', 'deployment', 'delivery'],
-            'ci/cd': ['continuous', 'integration', 'deployment', 'delivery'],
-            'aws': ['amazon', 'web', 'services'],
-            'api': ['application', 'programming', 'interface'],
-            'apis': ['application', 'programming', 'interface', 'endpoints'],
-            'rest': ['representational', 'state', 'transfer'],
-            'ui': ['user', 'interface'],
-            'db': ['database'],
-            'config': ['configuration'],
-            'admin': ['administration', 'administrator'],
-            'mgmt': ['management'],
-            'ops': ['operations'],
-            'dev': ['development'],
-            'prod': ['production'],
-            'env': ['environment'],
-            'tech': ['technology'],
-            'deploy': ['deployment'],
-            'troubleshoot': ['troubleshooting'],
-            'setup': ['setup', 'configuration'],
-            'guide': ['guide', 'guidelines'],
+            "adrs": [
+                "architecture",
+                "design",
+                "records",
+                "decision",
+            ],  # Include both design and decision
+            "adr": ["architecture", "design", "record", "decision"],
+            "arch": ["architecture"],
+            "sso": ["single", "sign", "on"],
+            "auth": ["authentication", "authorization", "auth"],
+            "kb": ["knowledge", "base"],
+            "rb": ["runbook"],
+            "ci": ["continuous", "integration"],
+            "cd": ["continuous", "delivery"],
+            "cicd": ["continuous", "integration", "deployment", "delivery"],
+            "ci/cd": ["continuous", "integration", "deployment", "delivery"],
+            "aws": ["amazon", "web", "services"],
+            "api": ["application", "programming", "interface"],
+            "apis": ["application", "programming", "interface", "endpoints"],
+            "rest": ["representational", "state", "transfer"],
+            "ui": ["user", "interface"],
+            "db": ["database"],
+            "config": ["configuration"],
+            "admin": ["administration", "administrator"],
+            "mgmt": ["management"],
+            "ops": ["operations"],
+            "dev": ["development"],
+            "prod": ["production"],
+            "env": ["environment"],
+            "tech": ["technology"],
+            "deploy": ["deployment"],
+            "troubleshoot": ["troubleshooting"],
+            "setup": ["setup", "configuration"],
+            "guide": ["guide", "guidelines"],
         }
 
         # Split on various separators and filter out short/meaningless words
@@ -140,7 +147,19 @@ class ConfluencePlugin(BasePlugin):
                 # Check if word is an abbreviation
                 if word in abbreviations:
                     meaningful_words.update(abbreviations[word])
-                elif word not in {"the", "and", "for", "with", "are", "not", "how", "can", "you", "but", "was"}:
+                elif word not in {
+                    "the",
+                    "and",
+                    "for",
+                    "with",
+                    "are",
+                    "not",
+                    "how",
+                    "can",
+                    "you",
+                    "but",
+                    "was",
+                }:
                     meaningful_words.add(word)
             elif len(word) == 2 and word in abbreviations:
                 # Handle 2-letter abbreviations
@@ -271,7 +290,7 @@ class ConfluencePlugin(BasePlugin):
         # Handle the case where nav_list is a dict (for recursive calls)
         if isinstance(nav_list, dict):
             nav_list = [nav_list]
-        
+
         for item in nav_list:
             if isinstance(item, dict):
                 for key, value in item.items():
@@ -398,7 +417,7 @@ class ConfluencePlugin(BasePlugin):
         # Handle the case where nav is a dict (for recursive calls)
         if isinstance(nav, dict):
             nav = [nav]
-        
+
         for item in nav:
             if isinstance(item, str):
                 result[item] = parent
@@ -434,7 +453,7 @@ class ConfluencePlugin(BasePlugin):
         self.page_lookup[title_key] = page_info
 
         # Create a reverse lookup from normalized title to page info for fuzzy matching
-        if not hasattr(self, 'title_to_page'):
+        if not hasattr(self, "title_to_page"):
             self.title_to_page = {}
         self.title_to_page[title_key] = page_info
 
@@ -868,66 +887,123 @@ class ConfluencePlugin(BasePlugin):
                         # Strategy 3a: Priority title matching - direct comparison with page titles
                         best_match = None
                         best_similarity = 0.0
-                        
+
                         # First pass: Look for title matches with high priority
                         for key, page_data in self.page_lookup.items():
                             page_title = page_data.get("title", "")
                             if not page_title:
                                 continue
-                            
+
                             # Calculate similarity between navigation entry and page title
                             title_similarity = self.calculate_word_similarity(
                                 node_clean, page_title
                             )
-                            
+
                             # Bonus for context matching - check if the page path contains folder context
                             context_bonus = 0.0
                             if len(path_stack) > 0:
                                 # Check if any words from the path stack appear in the page key or title
-                                path_context = " ".join(path_stack).lower().replace("-", " ").replace("_", " ")
+                                path_context = (
+                                    " ".join(path_stack)
+                                    .lower()
+                                    .replace("-", " ")
+                                    .replace("_", " ")
+                                )
                                 path_words = set(path_context.split())
-                                
+
                                 # Check page key for context words
-                                key_words = set(key.lower().replace("-", " ").replace("_", " ").split())
-                                title_words = set(page_title.lower().replace("-", " ").replace("_", " ").split())
-                                
-                                key_context_overlap = len(path_words.intersection(key_words))
-                                title_context_overlap = len(path_words.intersection(title_words))
-                                
+                                key_words = set(
+                                    key.lower()
+                                    .replace("-", " ")
+                                    .replace("_", " ")
+                                    .split()
+                                )
+                                title_words = set(
+                                    page_title.lower()
+                                    .replace("-", " ")
+                                    .replace("_", " ")
+                                    .split()
+                                )
+
+                                key_context_overlap = len(
+                                    path_words.intersection(key_words)
+                                )
+                                title_context_overlap = len(
+                                    path_words.intersection(title_words)
+                                )
+
                                 if key_context_overlap > 0 or title_context_overlap > 0:
-                                    context_bonus = min(0.2, (key_context_overlap + title_context_overlap) * 0.05)
-                            
+                                    context_bonus = min(
+                                        0.2,
+                                        (key_context_overlap + title_context_overlap)
+                                        * 0.05,
+                                    )
+
                             # Apply context bonus to title similarity
                             adjusted_similarity = title_similarity + context_bonus
-                            
+
                             # Higher priority for title matches
-                            if adjusted_similarity > best_similarity and adjusted_similarity >= 0.25:
+                            if (
+                                adjusted_similarity > best_similarity
+                                and adjusted_similarity >= 0.25
+                            ):
                                 best_similarity = adjusted_similarity
-                                best_match = (key, page_data, "title", title_similarity, context_bonus)
-                        
-                        # Second pass: Only if no good title match, try key matching  
-                        if best_similarity < 0.4:  # Only fallback to key matching if title match is poor
+                                best_match = (
+                                    key,
+                                    page_data,
+                                    "title",
+                                    title_similarity,
+                                    context_bonus,
+                                )
+
+                        # Second pass: Only if no good title match, try key matching
+                        if (
+                            best_similarity < 0.4
+                        ):  # Only fallback to key matching if title match is poor
                             for key, page_data in self.page_lookup.items():
                                 # Calculate similarity between navigation entry and lookup key
                                 key_similarity = self.calculate_word_similarity(
                                     node_clean, key.replace("-", " ")
                                 )
-                                
+
                                 # Apply same context bonus logic for key matching
                                 context_bonus = 0.0
                                 if len(path_stack) > 0:
-                                    path_context = " ".join(path_stack).lower().replace("-", " ").replace("_", " ")
+                                    path_context = (
+                                        " ".join(path_stack)
+                                        .lower()
+                                        .replace("-", " ")
+                                        .replace("_", " ")
+                                    )
                                     path_words = set(path_context.split())
-                                    key_words = set(key.lower().replace("-", " ").replace("_", " ").split())
-                                    key_context_overlap = len(path_words.intersection(key_words))
+                                    key_words = set(
+                                        key.lower()
+                                        .replace("-", " ")
+                                        .replace("_", " ")
+                                        .split()
+                                    )
+                                    key_context_overlap = len(
+                                        path_words.intersection(key_words)
+                                    )
                                     if key_context_overlap > 0:
-                                        context_bonus = min(0.2, key_context_overlap * 0.05)
-                                
+                                        context_bonus = min(
+                                            0.2, key_context_overlap * 0.05
+                                        )
+
                                 adjusted_similarity = key_similarity + context_bonus
-                                
-                                if adjusted_similarity > best_similarity and adjusted_similarity >= 0.25:
+
+                                if (
+                                    adjusted_similarity > best_similarity
+                                    and adjusted_similarity >= 0.25
+                                ):
                                     best_similarity = adjusted_similarity
-                                    best_match = (key, page_data, "key", key_similarity, context_bonus)
+                                    best_match = (
+                                        key,
+                                        page_data,
+                                        "key",
+                                        key_similarity,
+                                        context_bonus,
+                                    )
 
                         if best_match:
                             page_info = best_match[1]
@@ -958,7 +1034,9 @@ class ConfluencePlugin(BasePlugin):
                             # Strategy 3c: Try traditional fuzzy matching on the results
                             if not page_info:
                                 for match in matches:
-                                    page_title = self.page_lookup[match].get("title", "")
+                                    page_title = self.page_lookup[match].get(
+                                        "title", ""
+                                    )
                                     # More flexible title matching
                                     normalized_page_title = (
                                         page_title.lower()
@@ -991,7 +1069,9 @@ class ConfluencePlugin(BasePlugin):
                             log.warning(
                                 f"⚠️ No page data found for '{node}' → tried key '{lookup_key}' and fallback '{fallback_key}'"
                             )
-                            log.debug(f"🔍 Best similarity was: {best_similarity:.3f} (threshold: 0.25)")
+                            log.debug(
+                                f"🔍 Best similarity was: {best_similarity:.3f} (threshold: 0.25)"
+                            )
                             if (
                                 len(self.page_lookup) <= 20
                             ):  # Only show all keys if there aren't too many
@@ -1130,9 +1210,7 @@ class ConfluencePlugin(BasePlugin):
                 page_id = created.get("id")
             else:
                 page_id = f"DRYRUN-{title}"
-                self.dryrun_log(
-                    f"Would create page '{title}' under parent ID {parent_id}"
-                )
+                self.dryrun_log("create page", title, parent_id)
 
         # Attachments handling
         if attachments and abs_src_path and not self.dryrun:
@@ -1208,8 +1286,9 @@ class ConfluencePlugin(BasePlugin):
             return None
 
     def dryrun_log(self, action: str, title: str, parent_id=None):
+        """Log dry run actions with consistent formatting."""
         parent_info = f" under parent ID {parent_id}" if parent_id else ""
-        log.info(f"DRYRUN: Would {action} page '{title}'{parent_info}")
+        log.info(f"DRYRUN: Would {action} '{title}'{parent_info}")
 
     def _cache_key(self, title: str, parent_id) -> tuple:
         return (self._normalize_title(title), str(parent_id) if parent_id else None)
