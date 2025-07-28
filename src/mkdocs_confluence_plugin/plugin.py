@@ -481,23 +481,30 @@ class ConfluencePlugin(BasePlugin):
         return markdown  # Let MkDocs proceed as usual
 
     def on_page_content(self, html, page, config, files):
-        print("🧪 on_page_content called")
+        """Process page content and add footer if enabled."""
+        log.debug("🧪 on_page_content called")
 
         if not self.config.get("enable_footer"):
-            print("🚫 Footer disabled")
+            log.debug("🚫 Footer disabled")
             return html
 
         github_base_url = self.config.get("github_base_url")
         if not github_base_url:
-            print("⚠️  Missing github_base_url")
+            log.warning("⚠️ Missing github_base_url - footer cannot be generated")
             return html
 
         if not hasattr(page.file, "src_uri"):
-            print("❌ No src_uri on page.file")
+            log.warning("❌ No src_uri on page.file - footer cannot be generated")
             return html
 
-        footer = f'\n<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>\n'
-        print(f"✅ Adding footer: {footer.strip()}")
+        footer = f'<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>'
+        log.debug(f"✅ Adding footer: {footer}")
+
+        # Store the footer in page_lookup for later use in Confluence
+        title_key = self.normalize_title_key(page.title)
+        if title_key in self.page_lookup:
+            self.page_lookup[title_key]["footer"] = footer
+
         return html + footer
 
     def debug_dump_page_parents(self):
@@ -566,7 +573,7 @@ class ConfluencePlugin(BasePlugin):
         cache_key = (norm_title, norm_parent_id)
 
         if self.dryrun:
-            self.dryrun_log("create", title, parent_id)
+            self.dryrun_log("create page", title, parent_id)
             return f"DUMMY_ID_{title}"
 
         try:
@@ -586,6 +593,11 @@ class ConfluencePlugin(BasePlugin):
                 page_id = result["id"]
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = 1
+
+                # Apply labels to newly created page
+                if not is_folder:
+                    self.apply_labels_to_page(page_id)
+
                 log.info(
                     f"✅ Created {'folder' if is_folder else 'content'} page '{title}' with ID {page_id}"
                 )
@@ -625,6 +637,11 @@ class ConfluencePlugin(BasePlugin):
             )
             self.page_ids[cache_key] = page_id
             self.page_versions[cache_key] = new_version
+
+            # Apply labels to updated page
+            if not is_folder:
+                self.apply_labels_to_page(page_id)
+
             log.info(f"✅ Updated page '{title}' (version {new_version})")
             return page_id
         except Exception as e:
@@ -1179,6 +1196,40 @@ class ConfluencePlugin(BasePlugin):
             normalized_key = self.normalize_title_key("/".join(path_parts))
             self.page_lookup[normalized_key] = page
 
+    def apply_labels_to_page(self, page_id, labels=None):
+        """Apply labels to a Confluence page."""
+        if not labels:
+            # Use default_labels if available, otherwise use empty list
+            labels = getattr(self, 'default_labels', [])
+            
+        if not labels:
+            log.debug(f"📝 No labels to apply to page ID {page_id}")
+            return
+
+        if self.dryrun:
+            log.info(f"DRYRUN: Would apply labels {labels} to page ID {page_id}")
+            return
+
+        try:
+            # Get current labels to avoid duplicates
+            current_labels = self.confluence.get_page_labels(page_id)
+            current_label_names = [
+                label["name"] for label in current_labels.get("results", [])
+            ]
+
+            # Only add labels that don't already exist
+            new_labels = [label for label in labels if label not in current_label_names]
+
+            if new_labels:
+                for label in new_labels:
+                    self.confluence.set_page_label(page_id, label)
+                log.debug(f"✅ Applied labels {new_labels} to page ID {page_id}")
+            else:
+                log.debug(f"📝 All labels {labels} already exist on page ID {page_id}")
+
+        except Exception as e:
+            log.error(f"❌ Failed to apply labels {labels} to page ID {page_id}: {e}")
+
     def create_or_update_page(
         self,
         title,
@@ -1196,18 +1247,38 @@ class ConfluencePlugin(BasePlugin):
         key = self.normalize_title_key(title)
         page_exists, existing_id = self.page_exists(title, parent_id)
 
+        # Get page info to check for footer
+        page_info = None
+        for lookup_key, info in self.page_lookup.items():
+            if info.get("title") == title:
+                page_info = info
+                break
+
+        # Add footer to body if it exists
+        final_body = body
+        if page_info and page_info.get("footer") and not is_folder:
+            final_body = body + page_info["footer"]
+
         if page_exists:
             page_id = existing_id
             log.info(f"📝 Page exists: '{title}' (ID={page_id}) — updating.")
             if not self.dryrun:
-                self.confluence.update_page(page_id, title, body)
+                self.confluence.update_page(page_id, title, final_body)
+                # Apply labels to updated page
+                if not is_folder:
+                    self.apply_labels_to_page(page_id)
+            else:
+                self.dryrun_log("update page", title, parent_id)
         else:
             log.info(f"🆕 Page does not exist: '{title}' — creating.")
             if not self.dryrun:
                 created = self.confluence.create_page(
-                    self.space, title, body, parent_id
+                    self.space, title, final_body, parent_id
                 )
                 page_id = created.get("id")
+                # Apply labels to newly created page
+                if page_id and not is_folder:
+                    self.apply_labels_to_page(page_id)
             else:
                 page_id = f"DRYRUN-{title}"
                 self.dryrun_log("create page", title, parent_id)
@@ -1288,6 +1359,12 @@ class ConfluencePlugin(BasePlugin):
     def dryrun_log(self, action: str, title: str, parent_id=None):
         """Log dry run actions with consistent formatting."""
         parent_info = f" under parent ID {parent_id}" if parent_id else ""
+        # Ensure "page" is included in the action for test compatibility
+        if (
+            action.lower() in ["create", "update", "publish"]
+            and "page" not in action.lower()
+        ):
+            action = f"{action} page"
         log.info(f"DRYRUN: Would {action} '{title}'{parent_info}")
 
     def _cache_key(self, title: str, parent_id) -> tuple:

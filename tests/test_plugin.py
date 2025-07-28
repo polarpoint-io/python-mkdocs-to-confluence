@@ -296,9 +296,11 @@ def test_on_page_content_with_footer():
         "enable_footer": True,
         "github_base_url": "https://github.com/user/repo",
     }
+    plugin.page_lookup = {}  # Initialize page_lookup
 
     mock_page = Mock()
     mock_page.file.src_uri = "docs/test.md"
+    mock_page.title = "Test Page"  # Add missing title as string
 
     html = "<p>Original content</p>"
 
@@ -386,7 +388,7 @@ def test_create_page_dryrun():
     result = plugin.create_page("Test Page", "<p>content</p>", "parent-123")
 
     assert result == "DUMMY_ID_Test Page"
-    plugin.dryrun_log.assert_called_once_with("create", "Test Page", "parent-123")
+    plugin.dryrun_log.assert_called_once_with("create page", "Test Page", "parent-123")
 
 
 def test_find_page_id_with_parent():
@@ -1086,7 +1088,8 @@ TEMPLATE_BODY = "<p> TEMPLATE </p>"
 def test_dryrun_log_logs_info(caplog, plugin):
     with caplog.at_level("INFO"):
         plugin.dryrun_log("create", "Sample Page", parent_id="123")
-    assert "DRYRUN: Would create 'Sample Page' under parent ID 123" in caplog.text
+    assert "DRYRUN: Would create page 'Sample Page' under parent ID 123" in caplog.text
+
 
 def test_normalize_title_strips_punctuation(plugin):
     assert plugin._normalize_title(" Page! Title. ") == "pagetitle"
