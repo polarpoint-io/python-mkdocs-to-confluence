@@ -567,6 +567,139 @@ class ConfluencePlugin(BasePlugin):
             " ", ""
         )
 
+    def apply_labels_to_page(self, page_id, labels=None, page_meta=None):
+        """Apply labels to a Confluence page."""
+        all_labels = []
+
+        # Add default labels
+        default_labels = getattr(self, "default_labels", [])
+        if default_labels:
+            all_labels.extend(default_labels)
+
+        # Add labels from page metadata
+        if page_meta:
+            page_labels = page_meta.get("labels", []) or page_meta.get("tags", [])
+            if page_labels:
+                # Ensure labels are strings and clean them
+                clean_page_labels = [
+                    str(label).strip() for label in page_labels if label
+                ]
+                all_labels.extend(clean_page_labels)
+
+        # Add any explicitly passed labels
+        if labels:
+            all_labels.extend(labels)
+
+        # Remove duplicates while preserving order
+        unique_labels = []
+        seen = set()
+        for label in all_labels:
+            if label not in seen:
+                unique_labels.append(label)
+                seen.add(label)
+
+        if not unique_labels:
+            log.debug(f"📝 No labels to apply to page ID {page_id}")
+            return
+
+        if self.dryrun:
+            log.info(f"DRYRUN: Would apply labels {unique_labels} to page ID {page_id}")
+            return
+
+        try:
+            # Get current labels to avoid duplicates
+            current_labels = self.confluence.get_page_labels(page_id)
+            current_label_names = [
+                label["name"] for label in current_labels.get("results", [])
+            ]
+
+            # Only add labels that don't already exist
+            new_labels = [
+                label for label in unique_labels if label not in current_label_names
+            ]
+
+            if new_labels:
+                for label in new_labels:
+                    self.confluence.set_page_label(page_id, label)
+                log.debug(f"✅ Applied labels {new_labels} to page ID {page_id}")
+            else:
+                log.debug(
+                    f"📝 All labels {unique_labels} already exist on page ID {page_id}"
+                )
+
+        except Exception as e:
+            log.error(
+                f"❌ Failed to apply labels {unique_labels} to page ID {page_id}: {e}"
+            )
+
+    def create_or_update_page(
+        self,
+        title,
+        body="",
+        parent_id=None,
+        is_folder=False,
+        attachments=None,
+        abs_src_path=None,
+    ):
+        """Create or update a Confluence page. Handles folders, dry run, and logging."""
+        if not title:
+            log.warning("⚠️ create_or_update_page: Missing title. Skipping.")
+            return None
+
+        key = self.normalize_title_key(title)
+        page_exists, existing_id = self.page_exists(title, parent_id)
+
+        # Get page info to check for footer and metadata
+        page_info = None
+        title_key = self.normalize_title_key(title)
+        page_info = self.page_lookup.get(title_key)
+
+        if not page_info:
+            # Try to find by title match
+            for lookup_key, info in self.page_lookup.items():
+                if info.get("title") == title:
+                    page_info = info
+                    break
+
+        # Add footer to body if it exists
+        final_body = body
+        if page_info and page_info.get("footer") and not is_folder:
+            final_body = body + page_info["footer"]
+
+        # Extract metadata for labels
+        page_meta = page_info.get("meta", {}) if page_info else {}
+
+        if page_exists:
+            page_id = existing_id
+            log.info(f"📝 Page exists: '{title}' (ID={page_id}) — updating.")
+            if not self.dryrun:
+                self.confluence.update_page(page_id, title, final_body)
+                # Apply labels to updated page (including page metadata labels)
+                if not is_folder:
+                    self.apply_labels_to_page(page_id, page_meta=page_meta)
+            else:
+                self.dryrun_log("update", title, parent_id)
+        else:
+            log.info(f"🆕 Page does not exist: '{title}' — creating.")
+            if not self.dryrun:
+                created = self.confluence.create_page(
+                    self.space, title, final_body, parent_id
+                )
+                page_id = created.get("id")
+                # Apply labels to newly created page (including page metadata labels)
+                if page_id and not is_folder:
+                    self.apply_labels_to_page(page_id, page_meta=page_meta)
+            else:
+                page_id = f"DRYRUN-{title}"
+                self.dryrun_log("create", title, parent_id)
+
+        # Attachments handling
+        if attachments and abs_src_path and not self.dryrun:
+            self.sync_page_attachments(page_id, abs_src_path, attachments)
+
+        self.page_ids[key] = page_id
+        return page_id
+
     def create_page(self, title, body, parent_id, is_folder=False):
         norm_title = self._normalize_title(title)
         norm_parent_id = str(parent_id) if parent_id else None
@@ -575,6 +708,11 @@ class ConfluencePlugin(BasePlugin):
         if self.dryrun:
             self.dryrun_log("create page", title, parent_id)
             return f"DUMMY_ID_{title}"
+
+        # Get page metadata for labels
+        title_key = self.normalize_title_key(title)
+        page_info = self.page_lookup.get(title_key, {})
+        page_meta = page_info.get("meta", {})
 
         try:
             log.info(
@@ -594,9 +732,9 @@ class ConfluencePlugin(BasePlugin):
                 self.page_ids[cache_key] = page_id
                 self.page_versions[cache_key] = 1
 
-                # Apply labels to newly created page
+                # Apply labels to newly created page (including page metadata labels)
                 if not is_folder:
-                    self.apply_labels_to_page(page_id)
+                    self.apply_labels_to_page(page_id, page_meta=page_meta)
 
                 log.info(
                     f"✅ Created {'folder' if is_folder else 'content'} page '{title}' with ID {page_id}"
@@ -638,15 +776,94 @@ class ConfluencePlugin(BasePlugin):
             self.page_ids[cache_key] = page_id
             self.page_versions[cache_key] = new_version
 
-            # Apply labels to updated page
+            # Apply labels to updated page (including page metadata labels)
             if not is_folder:
-                self.apply_labels_to_page(page_id)
+                self.apply_labels_to_page(page_id, page_meta=page_meta)
 
             log.info(f"✅ Updated page '{title}' (version {new_version})")
             return page_id
         except Exception as e:
             log.error(
                 f"❌ Failed to update page '{title}' (ID {page_id}): {e}", exc_info=True
+            )
+            return None
+
+    def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
+        norm_title = self._normalize_title(page_title)
+        norm_parent_id = str(parent_id) if parent_id else None
+        cache_key = (norm_title, norm_parent_id)
+
+        if dryrun:
+            self.dryrun_log("publish page", page_title, parent_id)
+            return f"DUMMY_ID_{page_title}"
+
+        # Get page metadata for labels
+        title_key = self.normalize_title_key(page_title)
+        page_info = self.page_lookup.get(title_key, {})
+        page_meta = page_info.get("meta", {})
+
+        # Try to create page first
+        try:
+            log.info(f"📄 Creating page '{page_title}' under parent ID {parent_id}")
+            result = self.confluence.create_page(
+                space=self.config["space"],
+                title=page_title,
+                body=body or "",
+                parent_id=parent_id,
+                representation="storage",
+            )
+            if result and "id" in result:
+                page_id = result["id"]
+                self.page_ids[cache_key] = page_id
+                self.page_versions[cache_key] = 1
+
+                # Apply labels to newly created page
+                self.apply_labels_to_page(page_id, page_meta=page_meta)
+
+                log.info(f"✅ Created page '{page_title}' with ID {page_id}")
+                return page_id
+        except Exception as e:
+            if "already exists with the same TITLE" in str(e):
+                log.warning(f"⚠️ Page '{page_title}' already exists — attempting update")
+            else:
+                log.error(
+                    f"❌ Failed to create page '{page_title}': {e}", exc_info=True
+                )
+                return None
+
+        # Fallback: Update existing page
+        page_id = self.find_page_id(page_title, parent_id)
+        if not page_id:
+            log.error(f"❌ Cannot update '{page_title}': page ID not found")
+            return None
+
+        prev_version = self.page_versions.get(cache_key, 1)
+        new_version = prev_version + 1
+        try:
+            log.info(
+                f"🔁 Updating page '{page_title}' (ID {page_id}) to version {new_version}"
+            )
+            self.confluence.update_page(
+                page_id=page_id,
+                title=page_title,
+                body=body or "",
+                parent_id=parent_id,
+                type="page",
+                representation="storage",
+                minor_edit=False,
+            )
+            self.page_ids[cache_key] = page_id
+            self.page_versions[cache_key] = new_version
+
+            # Apply labels to updated page
+            self.apply_labels_to_page(page_id, page_meta=page_meta)
+
+            log.info(f"✅ Updated page '{page_title}' (version {new_version})")
+            return page_id
+        except Exception as e:
+            log.error(
+                f"❌ Failed to update page '{page_title}' (ID {page_id}): {e}",
+                exc_info=True,
             )
             return None
 
@@ -1196,165 +1413,10 @@ class ConfluencePlugin(BasePlugin):
             normalized_key = self.normalize_title_key("/".join(path_parts))
             self.page_lookup[normalized_key] = page
 
-    def apply_labels_to_page(self, page_id, labels=None):
-        """Apply labels to a Confluence page."""
-        if not labels:
-            # Use default_labels if available, otherwise use empty list
-            labels = getattr(self, 'default_labels', [])
-            
-        if not labels:
-            log.debug(f"📝 No labels to apply to page ID {page_id}")
-            return
-
-        if self.dryrun:
-            log.info(f"DRYRUN: Would apply labels {labels} to page ID {page_id}")
-            return
-
-        try:
-            # Get current labels to avoid duplicates
-            current_labels = self.confluence.get_page_labels(page_id)
-            current_label_names = [
-                label["name"] for label in current_labels.get("results", [])
-            ]
-
-            # Only add labels that don't already exist
-            new_labels = [label for label in labels if label not in current_label_names]
-
-            if new_labels:
-                for label in new_labels:
-                    self.confluence.set_page_label(page_id, label)
-                log.debug(f"✅ Applied labels {new_labels} to page ID {page_id}")
-            else:
-                log.debug(f"📝 All labels {labels} already exist on page ID {page_id}")
-
-        except Exception as e:
-            log.error(f"❌ Failed to apply labels {labels} to page ID {page_id}: {e}")
-
-    def create_or_update_page(
-        self,
-        title,
-        body="",
-        parent_id=None,
-        is_folder=False,
-        attachments=None,
-        abs_src_path=None,
-    ):
-        """Create or update a Confluence page. Handles folders, dry run, and logging."""
-        if not title:
-            log.warning("⚠️ create_or_update_page: Missing title. Skipping.")
-            return None
-
-        key = self.normalize_title_key(title)
-        page_exists, existing_id = self.page_exists(title, parent_id)
-
-        # Get page info to check for footer
-        page_info = None
-        for lookup_key, info in self.page_lookup.items():
-            if info.get("title") == title:
-                page_info = info
-                break
-
-        # Add footer to body if it exists
-        final_body = body
-        if page_info and page_info.get("footer") and not is_folder:
-            final_body = body + page_info["footer"]
-
-        if page_exists:
-            page_id = existing_id
-            log.info(f"📝 Page exists: '{title}' (ID={page_id}) — updating.")
-            if not self.dryrun:
-                self.confluence.update_page(page_id, title, final_body)
-                # Apply labels to updated page
-                if not is_folder:
-                    self.apply_labels_to_page(page_id)
-            else:
-                self.dryrun_log("update page", title, parent_id)
-        else:
-            log.info(f"🆕 Page does not exist: '{title}' — creating.")
-            if not self.dryrun:
-                created = self.confluence.create_page(
-                    self.space, title, final_body, parent_id
-                )
-                page_id = created.get("id")
-                # Apply labels to newly created page
-                if page_id and not is_folder:
-                    self.apply_labels_to_page(page_id)
-            else:
-                page_id = f"DRYRUN-{title}"
-                self.dryrun_log("create page", title, parent_id)
-
-        # Attachments handling
-        if attachments and abs_src_path and not self.dryrun:
-            self.sync_page_attachments(page_id, abs_src_path, attachments)
-
-        self.page_ids[key] = page_id
-        return page_id
-
-    def publish_page(self, page_title, body, parent_id, source_path=None, dryrun=False):
-        norm_title = self._normalize_title(page_title)
-        norm_parent_id = str(parent_id) if parent_id else None
-        cache_key = (norm_title, norm_parent_id)
-
-        if dryrun:
-            self.dryrun_log("publish page", page_title, parent_id)
-            return f"DUMMY_ID_{page_title}"
-
-        # Try to create page first
-        try:
-            log.info(f"📄 Creating page '{page_title}' under parent ID {parent_id}")
-            result = self.confluence.create_page(
-                space=self.config["space"],
-                title=page_title,
-                body=body or "",
-                parent_id=parent_id,
-                representation="storage",
-            )
-            if result and "id" in result:
-                page_id = result["id"]
-                self.page_ids[cache_key] = page_id
-                self.page_versions[cache_key] = 1
-                log.info(f"✅ Created page '{page_title}' with ID {page_id}")
-                return page_id
-        except Exception as e:
-            if "already exists with the same TITLE" in str(e):
-                log.warning(f"⚠️ Page '{page_title}' already exists — attempting update")
-            else:
-                log.error(
-                    f"❌ Failed to create page '{page_title}': {e}", exc_info=True
-                )
-                return None
-
-        # Fallback: Update existing page
-        page_id = self.find_page_id(page_title, parent_id)
-        if not page_id:
-            log.error(f"❌ Cannot update '{page_title}': page ID not found")
-            return None
-
-        prev_version = self.page_versions.get(cache_key, 1)
-        new_version = prev_version + 1
-        try:
-            log.info(
-                f"🔁 Updating page '{page_title}' (ID {page_id}) to version {new_version}"
-            )
-            self.confluence.update_page(
-                page_id=page_id,
-                title=page_title,
-                body=body or "",
-                parent_id=parent_id,
-                type="page",
-                representation="storage",
-                minor_edit=False,
-            )
-            self.page_ids[cache_key] = page_id
-            self.page_versions[cache_key] = new_version
-            log.info(f"✅ Updated page '{page_title}' (version {new_version})")
-            return page_id
-        except Exception as e:
-            log.error(
-                f"❌ Failed to update page '{page_title}' (ID {page_id}): {e}",
-                exc_info=True,
-            )
-            return None
+    def debug_dump_page_parents(self):
+        print("🔍 Page parent mapping:")
+        for child, parent in self.page_parents.items():
+            print(f"  {child} ← {parent}")
 
     def dryrun_log(self, action: str, title: str, parent_id=None):
         """Log dry run actions with consistent formatting."""
