@@ -575,22 +575,24 @@ def test_upload_attachment_failure():
 
 def test_collect_page_attachments():
     plugin = ConfluencePlugin()
-    
+
     # Create temporary files to simulate markdown content and images
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
-        
+
         # Create a markdown file
         md_file = temp_path / "test.md"
-        md_file.write_text("# Test\n![image](image.png)\n![external](https://example.com/image.jpg)")
-        
+        md_file.write_text(
+            "# Test\n![image](image.png)\n![external](https://example.com/image.jpg)"
+        )
+
         # Create the referenced image
         img_file = temp_path / "image.png"
         img_file.write_bytes(b"fake image data")
-        
+
         content = md_file.read_text()
         attachments = plugin.collect_page_attachments(str(md_file), content)
-        
+
         # Should find the local image but not the external URL
         assert len(attachments) == 1
         assert attachments[0].name == "image.png"
@@ -655,10 +657,12 @@ def test_sync_page_attachments():
 
     # Create mock attachments list
     attachments = [Path("/path/to/image.png")]
-    
+
     plugin.sync_page_attachments("page-123", attachments)
 
-    plugin.add_or_update_attachment.assert_called_once_with("page-123", Path("/path/to/image.png"))
+    plugin.add_or_update_attachment.assert_called_once_with(
+        "page-123", Path("/path/to/image.png")
+    )
 
 
 def test_build_and_publish_tree_with_fallback():
@@ -709,7 +713,10 @@ def test_build_and_publish_tree_fuzzy_matching_fallback():
         side_effect=lambda x: x.lower().replace(" ", "-").replace("/", "-")
     )
     plugin.page_lookup = {
-        "completely-different-name": {"title": "Completely Different Title", "body": "content"}
+        "completely-different-name": {
+            "title": "Completely Different Title",
+            "body": "content",
+        }
     }
     plugin.attachments = {}
     plugin.create_or_update_page = Mock(return_value="page-123")
@@ -719,7 +726,7 @@ def test_build_and_publish_tree_fuzzy_matching_fallback():
         mock_fuzzy.return_value = ["completely-different-name"]
 
         # This should NOT be caught by title matching and should fall back to fuzzy
-        nav_tree = ["Very Different Text"]  
+        nav_tree = ["Very Different Text"]
         plugin.build_and_publish_tree(nav_tree)
 
     # Should have called fuzzy matching as fallback
@@ -767,7 +774,9 @@ def test_create_or_update_page_with_attachments():
     )
 
     assert result == "new-123"
-    plugin.collect_page_attachments.assert_called_once_with("/path/to/source.md", "<p>content</p>")
+    plugin.collect_page_attachments.assert_called_once_with(
+        "/path/to/source.md", "<p>content</p>"
+    )
     plugin.sync_page_attachments.assert_called_once_with("new-123", [Path("file1.png")])
 
 
@@ -913,17 +922,17 @@ def test_sync_page_attachments_calls_add_or_update_attachment(
 ):
     # Setup authentication for test
     plugin.auth_configured = True
-    
+
     # Create test attachment
     img_file = tmp_path / "image.png"
     img_file.write_bytes(b"dummy image data")
-    
+
     # Mock the add_or_update_attachment method
     plugin.add_or_update_attachment = Mock()
 
     # Create attachments list
     attachments = [img_file]
-    
+
     # Act - use new API signature
     plugin.sync_page_attachments("mock-page-id", attachments)
 
@@ -1121,7 +1130,7 @@ def test_clear_cached_page_info(plugin):
 def test_get_page_url_returns_correct_url(plugin):
     plugin.config = {
         "host_url": "https://example.atlassian.net/wiki/rest/api/content",
-        "space": "TEST"
+        "space": "TEST",
     }
     # Use correct cache key format: (_normalize_title(title), parent_id)
     plugin.page_ids = {("testpage", None): "45678"}
@@ -1255,7 +1264,9 @@ def test_normalize_parent_id():
     assert plugin._normalize_parent_id(123) == "123"
     assert plugin._normalize_parent_id("456") == "456"
     assert plugin._normalize_parent_id(None) is None
-    assert plugin._normalize_parent_id("") is None  # Empty string should be treated as None
+    assert (
+        plugin._normalize_parent_id("") is None
+    )  # Empty string should be treated as None
 
 
 def test_collect_all_page_names():
