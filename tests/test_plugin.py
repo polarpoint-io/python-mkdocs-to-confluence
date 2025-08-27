@@ -774,10 +774,75 @@ def test_create_or_update_page_with_attachments():
     )
 
     assert result == "new-123"
-    plugin.collect_page_attachments.assert_called_once_with(
-        "/path/to/source.md", "<p>content</p>"
+    # With deferred attachment processing, attachments should be added to deferred queue
+    assert len(plugin.deferred_attachments) == 1
+    deferred = plugin.deferred_attachments[0]
+    assert deferred["page_id"] == "new-123"
+    assert deferred["page_title"] == "Test Page"
+    assert deferred["src_path"] == "/path/to/source.md"
+    assert deferred["processed_content"] == "<p>content</p>"
+
+    # Attachments should NOT be processed immediately
+    plugin.collect_page_attachments.assert_not_called()
+    plugin.sync_page_attachments.assert_not_called()
+
+
+def test_deferred_attachment_processing():
+    """Test that deferred attachments are processed in on_post_build."""
+    plugin = ConfluencePlugin()
+    plugin.dryrun = False
+    plugin.enabled = True
+    plugin.collect_page_attachments = Mock(
+        return_value=[Path("file1.png"), Path("file2.png")]
     )
-    plugin.sync_page_attachments.assert_called_once_with("new-123", [Path("file1.png")])
+    plugin.sync_page_attachments = Mock()
+
+    # Initialize required attributes for on_post_build
+    plugin.tab_nav = []
+    plugin.parent_page_id = None
+    plugin.page_lookup = {}
+    plugin.pages = []
+    plugin.debug_dump_pages = Mock()
+    plugin.build_and_publish_tree = Mock()  # Skip actual page publishing for this test
+
+    # Add some deferred attachments
+    plugin.deferred_attachments = [
+        {
+            "page_id": "123",
+            "page_title": "Page 1",
+            "src_path": "/path/to/page1.md",
+            "original_content": "# Page 1\n![](image1.png)",
+            "processed_content": "<h1>Page 1</h1><img src='image1.png'>",
+        },
+        {
+            "page_id": "456",
+            "page_title": "Page 2",
+            "src_path": "/path/to/page2.md",
+            "original_content": "# Page 2\n![](image2.png)",
+            "processed_content": "<h1>Page 2</h1><img src='image2.png'>",
+        },
+    ]
+
+    # Process deferred attachments
+    plugin.on_post_build({})
+
+    # Should have processed attachments for both pages
+    assert plugin.collect_page_attachments.call_count == 2
+    plugin.collect_page_attachments.assert_any_call(
+        "/path/to/page1.md", "# Page 1\n![](image1.png)"
+    )
+    plugin.collect_page_attachments.assert_any_call(
+        "/path/to/page2.md", "# Page 2\n![](image2.png)"
+    )
+
+    # Should have synced attachments for both pages
+    assert plugin.sync_page_attachments.call_count == 2
+    plugin.sync_page_attachments.assert_any_call(
+        "123", [Path("file1.png"), Path("file2.png")]
+    )
+    plugin.sync_page_attachments.assert_any_call(
+        "456", [Path("file1.png"), Path("file2.png")]
+    )
 
 
 def test_create_or_update_page_update_existing():

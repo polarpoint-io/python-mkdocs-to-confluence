@@ -82,6 +82,8 @@ class ConfluencePlugin(BasePlugin):
         self.tab_nav = []
         self.attachments = {}
         self.auth_configured = False
+        # Store attachments for deferred processing after all plugins have run
+        self.deferred_attachments = []
 
     def normalize_title_key(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -549,6 +551,73 @@ class ConfluencePlugin(BasePlugin):
         # ✅ Publish content pages via structured tree
         self.build_and_publish_tree(self.tab_nav, self.parent_page_id)
 
+        # 🔗 Process all deferred attachments after all pages are created
+        if self.deferred_attachments:
+            log.info(
+                f"🔗 Processing {len(self.deferred_attachments)} deferred attachment collections after all plugins have finished"
+            )
+
+            for i, attachment_info in enumerate(self.deferred_attachments, 1):
+                page_id = attachment_info["page_id"]
+                page_title = attachment_info["page_title"]
+                src_path = attachment_info["src_path"]
+                original_content = attachment_info["original_content"]
+
+                log.debug(
+                    f"Processing deferred attachments {i}/{len(self.deferred_attachments)} for page '{page_title}' (ID: {page_id})"
+                )
+
+                # Try to collect attachments from original content first (before PlantUML processing)
+                attachments = []
+                if original_content:
+                    log.debug(
+                        f"Attempting to collect attachments from original content"
+                    )
+                    attachments = self.collect_page_attachments(
+                        src_path, original_content
+                    )
+
+                # If no attachments found in original content, check if files exist anyway
+                # (PlantUML might have generated them and we can detect them by file existence)
+                if not attachments:
+                    log.debug(
+                        f"No attachments found in original content, checking for generated files..."
+                    )
+                    # Re-read the current file content to see what PlantUML might have generated
+                    if src_path and Path(src_path).exists():
+                        current_content = Path(src_path).read_text()
+                        attachments = self.collect_page_attachments(
+                            src_path, current_content
+                        )
+
+                if attachments:
+                    log.debug(
+                        f"Found {len(attachments)} attachments for page '{page_title}'"
+                    )
+                    for j, attachment in enumerate(attachments, 1):
+                        try:
+                            file_size = attachment.stat().st_size
+                            log.debug(
+                                f"  Attachment {j}: {attachment.name} ({file_size} bytes) - {attachment}"
+                            )
+                        except Exception as e:
+                            log.debug(
+                                f"  Attachment {j}: {attachment.name} - Could not get file size: {e}"
+                            )
+
+                    if not self.dryrun:
+                        self.sync_page_attachments(page_id, attachments)
+                    else:
+                        log.info(
+                            f"DRYRUN: Would sync {len(attachments)} attachments for page '{page_title}'"
+                        )
+                else:
+                    log.debug(f"No attachments found for page '{page_title}'")
+
+            log.info(f"✅ Completed processing all deferred attachments")
+        else:
+            log.debug("No deferred attachments to process")
+
     def get_page_url(self, title, parent_id=None):
         cache_key = self._cache_key(title, parent_id)
         page_id = self.page_ids.get(cache_key)
@@ -698,24 +767,25 @@ class ConfluencePlugin(BasePlugin):
                 page_id = f"DRYRUN-{title}"
                 self.dryrun_log("create", title, parent_id)
 
-        # Attachments handling
-        if abs_src_path and not self.dryrun:
-            attachments = self.collect_page_attachments(abs_src_path, body)
+        # Attachments handling - defer processing until after all plugins have run
+        if abs_src_path:
+            # Store the original markdown content before any plugins modify it
+            original_content = None
+            if abs_src_path and Path(abs_src_path).exists():
+                original_content = Path(abs_src_path).read_text()
+
+            # Store attachment info for deferred processing
+            attachment_info = {
+                "page_id": page_id,
+                "page_title": title,
+                "src_path": abs_src_path,
+                "original_content": original_content,
+                "processed_content": body,
+            }
+            self.deferred_attachments.append(attachment_info)
             log.debug(
-                f"Collected {len(attachments)} attachments for page '{title}' (ID: {page_id})"
+                f"Deferred attachment processing for page '{title}' (ID: {page_id})"
             )
-            for i, attachment in enumerate(attachments, 1):
-                try:
-                    file_size = attachment.stat().st_size
-                    log.debug(
-                        f"  Attachment {i}: {attachment.name} ({file_size} bytes) - {attachment}"
-                    )
-                except Exception as e:
-                    log.debug(
-                        f"  Attachment {i}: {attachment.name} - Could not get file size: {e}"
-                    )
-            if attachments:
-                self.sync_page_attachments(page_id, attachments)
 
         self.page_ids[key] = page_id
         return page_id
