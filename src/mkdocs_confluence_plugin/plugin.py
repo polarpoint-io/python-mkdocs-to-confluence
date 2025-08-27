@@ -701,6 +701,13 @@ class ConfluencePlugin(BasePlugin):
         # Attachments handling
         if abs_src_path and not self.dryrun:
             attachments = self.collect_page_attachments(abs_src_path, body)
+            log.debug(f"Collected {len(attachments)} attachments for page '{title}' (ID: {page_id})")
+            for i, attachment in enumerate(attachments, 1):
+                try:
+                    file_size = attachment.stat().st_size
+                    log.debug(f"  Attachment {i}: {attachment.name} ({file_size} bytes) - {attachment}")
+                except Exception as e:
+                    log.debug(f"  Attachment {i}: {attachment.name} - Could not get file size: {e}")
             if attachments:
                 self.sync_page_attachments(page_id, attachments)
 
@@ -974,13 +981,16 @@ class ConfluencePlugin(BasePlugin):
         
         attachments = []
         if not src_path:
+            log.debug("collect_page_attachments: No source path provided")
             return attachments
             
         src_dir = Path(src_path).parent
+        log.debug(f"Collecting attachments from {src_path} (source dir: {src_dir})")
         
         # Find markdown image references: ![alt](path) and ![alt](path "title")
         img_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
         matches = re.findall(img_pattern, content)
+        log.debug(f"Found {len(matches)} image references in markdown: {[match[1] for match in matches]}")
         
         for alt_text, img_path in matches:
             # Remove any quotes and title text
@@ -1029,10 +1039,12 @@ class ConfluencePlugin(BasePlugin):
                     
             # Check if file exists and is an image
             if img_file and img_file.exists() and img_file.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.webp'):
-                attachments.append(img_file.resolve())
-                log.debug(f"Found attachment: {img_file}")
+                resolved_path = img_file.resolve()
+                file_size = resolved_path.stat().st_size
+                attachments.append(resolved_path)
+                log.debug(f"✓ Found attachment: {img_file} ({file_size} bytes) from markdown reference: {img_path}")
             else:
-                log.warning(f"Referenced image not found: {img_path} (resolved to {img_file})")
+                log.warning(f"✗ Referenced image not found: {img_path} (resolved to {img_file})")
                 
         return attachments
 
@@ -1043,10 +1055,13 @@ class ConfluencePlugin(BasePlugin):
             return
             
         if not attachments:
+            log.debug(f"No attachments to sync for page ID {page_id}")
             return
             
-        for attachment_path in attachments:
+        log.info(f"Syncing {len(attachments)} attachments for page ID {page_id}")
+        for i, attachment_path in enumerate(attachments, 1):
             try:
+                log.debug(f"Processing attachment {i}/{len(attachments)}: {attachment_path.name}")
                 self.add_or_update_attachment(page_id, attachment_path)
             except Exception as e:
                 log.error(f"Failed to sync attachment {attachment_path}: {e}")
@@ -1057,7 +1072,11 @@ class ConfluencePlugin(BasePlugin):
             log.warning("Authentication not configured for attachment uploads")
             return
             
-        log.info(f"Handling attachment: file '{filepath.name}' for page ID {page_id}")
+        try:
+            file_size = filepath.stat().st_size
+            log.info(f"Handling attachment: file '{filepath.name}' ({file_size} bytes) for page ID {page_id}")
+        except Exception as e:
+            log.info(f"Handling attachment: file '{filepath.name}' (size unknown: {e}) for page ID {page_id}")
         
         if not page_id:
             log.error("Cannot upload attachment: Page ID is missing")
@@ -1066,6 +1085,7 @@ class ConfluencePlugin(BasePlugin):
         try:
             file_hash = self.get_file_sha1(filepath)
             attachment_comment = f"ConfluencePlugin [v{file_hash}]"
+            log.debug(f"Attachment '{filepath.name}' hash: {file_hash}")
 
             existing_attachment = self.get_attachment(page_id, filepath)
             if existing_attachment:
@@ -1077,8 +1097,11 @@ class ConfluencePlugin(BasePlugin):
                     log.info(f"Attachment '{filepath.name}' is up-to-date. Skipping upload.")
                     return
                 else:
+                    log.debug(f"Attachment '{filepath.name}' has changed (old hash: {current_hash_match.group(1) if current_hash_match else 'unknown'}, new hash: {file_hash})")
                     self.delete_attachment(existing_attachment["id"])
                     log.info(f"Deleted outdated attachment '{filepath.name}'.")
+            else:
+                log.debug(f"No existing attachment found for '{filepath.name}', will upload new one")
 
             self.upload_attachment(page_id, filepath, attachment_comment)
         except Exception as e:
@@ -1105,9 +1128,13 @@ class ConfluencePlugin(BasePlugin):
     def upload_attachment(self, page_id, filepath, comment):
         """Upload an attachment to a page."""
         try:
+            file_size = filepath.stat().st_size
+            log.debug(f"Starting upload of '{filepath.name}' ({file_size} bytes) to page ID {page_id}")
+            
             # Use base URL without /rest/api/content since we add it below
             base_url = self.config['host_url'].replace('/rest/api/content', '')
             url = f"{base_url}/rest/api/content/{page_id}/child/attachment"
+            log.debug(f"Upload URL: {url}")
             
             # Set headers for Confluence Cloud API
             headers = {
@@ -1117,14 +1144,16 @@ class ConfluencePlugin(BasePlugin):
             with open(filepath, "rb") as f:
                 files = {"file": (filepath.name, f, mimetypes.guess_type(filepath.name)[0])}
                 data = {"comment": comment}
+                log.debug(f"Uploading file with comment: {comment}")
                 response = self.session.post(url, files=files, data=data, headers=headers)
             
             if response.status_code in (200, 201):
-                log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
+                log.info(f"✓ Successfully uploaded attachment '{filepath.name}' ({file_size} bytes) to page ID {page_id}")
+                log.debug(f"Upload response status: {response.status_code}")
             else:
-                log.error(f"Failed to upload attachment '{filepath.name}' (status {response.status_code}): {response.text}")
+                log.error(f"✗ Failed to upload attachment '{filepath.name}' (status {response.status_code}): {response.text}")
         except Exception as e:
-            log.error(f"Error uploading attachment {filepath}: {e}")
+            log.error(f"✗ Error uploading attachment {filepath}: {e}")
 
     def delete_attachment(self, attachment_id):
         """Delete an attachment by ID."""
