@@ -990,23 +990,45 @@ class ConfluencePlugin(BasePlugin):
             if img_path.startswith(('http://', 'https://', '//')):
                 continue
                 
-            # Handle relative paths
+            img_file = None
+            
+            # Handle relative paths - try multiple resolution strategies
             if img_path.startswith('./'):
+                # Remove ./ prefix
                 img_path = img_path[2:]
-            elif img_path.startswith('../'):
-                # Handle parent directory references
                 img_file = src_dir / img_path
+            elif img_path.startswith('../'):
+                # Handle parent directory references - try multiple strategies
+                
+                # Strategy 1: Resolve relative to source file
+                img_file = (src_dir / img_path).resolve()
+                
+                # Strategy 2: If not found, try relative to docs root
+                if not img_file.exists():
+                    # If the path goes up to project root, try prefixing with docs/
+                    if img_path.startswith('../../../'):
+                        # This likely goes to project root, so try docs/ prefix
+                        alt_path = img_path[9:]  # Remove ../../../
+                        img_file = Path("docs") / alt_path
+                        
+                # Strategy 3: Try relative to project root
+                if not img_file.exists() and img_path.startswith('../'):
+                    # Resolve from source directory and see if it makes sense
+                    try:
+                        project_relative = (src_dir / img_path).resolve()
+                        if project_relative.exists():
+                            img_file = project_relative
+                    except:
+                        pass
+                        
             else:
-                # Try both relative to source file and relative to docs root
+                # Non-relative paths: try both relative to source file and relative to docs root
                 img_file = src_dir / img_path
                 if not img_file.exists():
                     img_file = Path("docs") / img_path
                     
-            if not img_path.startswith('../'):
-                img_file = src_dir / img_path
-                
             # Check if file exists and is an image
-            if img_file.exists() and img_file.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.webp'):
+            if img_file and img_file.exists() and img_file.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.webp'):
                 attachments.append(img_file.resolve())
                 log.debug(f"Found attachment: {img_file}")
             else:
