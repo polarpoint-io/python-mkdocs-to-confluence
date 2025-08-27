@@ -480,6 +480,7 @@ def test_find_page_id_or_global_fallback():
 def test_add_or_update_attachment():
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com"}
+    plugin.auth_configured = True  # Enable authentication for test
     plugin.parent_page_id = "parent-123"
     plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
     plugin.page_ids = {("test-page", "parent-123"): "page-123"}
@@ -490,7 +491,7 @@ def test_add_or_update_attachment():
 
     with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
         tmp_path = Path(tmp_file.name)
-        plugin.add_or_update_attachment("Test Page", tmp_path)
+        plugin.add_or_update_attachment("page-123", tmp_path)
 
     plugin.upload_attachment.assert_called_once()
 
@@ -498,6 +499,7 @@ def test_add_or_update_attachment():
 def test_add_or_update_attachment_up_to_date():
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com"}
+    plugin.auth_configured = True  # Enable authentication for test
     plugin.parent_page_id = "parent-123"
     plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
     plugin.page_ids = {("test-page", "parent-123"): "page-123"}
@@ -513,7 +515,7 @@ def test_add_or_update_attachment_up_to_date():
 
     with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
         tmp_path = Path(tmp_file.name)
-        plugin.add_or_update_attachment("Test Page", tmp_path)
+        plugin.add_or_update_attachment("page-123", tmp_path)
 
     # Should not upload if up to date
     plugin.upload_attachment.assert_not_called()
@@ -522,6 +524,7 @@ def test_add_or_update_attachment_up_to_date():
 def test_add_or_update_attachment_outdated():
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com"}
+    plugin.auth_configured = True  # Enable authentication for test
     plugin.parent_page_id = "parent-123"
     plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
     plugin.page_ids = {("test-page", "parent-123"): "page-123"}
@@ -538,7 +541,7 @@ def test_add_or_update_attachment_outdated():
 
     with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
         tmp_path = Path(tmp_file.name)
-        plugin.add_or_update_attachment("Test Page", tmp_path)
+        plugin.add_or_update_attachment("page-123", tmp_path)
 
     plugin.delete_attachment.assert_called_once_with("att-123")
     plugin.upload_attachment.assert_called_once()
@@ -568,6 +571,29 @@ def test_upload_attachment_failure():
         plugin.upload_attachment("page-123", tmp_path, "test comment")
 
     plugin.session.post.assert_called_once()
+
+
+def test_collect_page_attachments():
+    plugin = ConfluencePlugin()
+    
+    # Create temporary files to simulate markdown content and images
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        
+        # Create a markdown file
+        md_file = temp_path / "test.md"
+        md_file.write_text("# Test\n![image](image.png)\n![external](https://example.com/image.jpg)")
+        
+        # Create the referenced image
+        img_file = temp_path / "image.png"
+        img_file.write_bytes(b"fake image data")
+        
+        content = md_file.read_text()
+        attachments = plugin.collect_page_attachments(str(md_file), content)
+        
+        # Should find the local image but not the external URL
+        assert len(attachments) == 1
+        assert attachments[0].name == "image.png"
 
 
 def test_delete_attachment_success():
@@ -624,17 +650,15 @@ def test_get_attachment_not_found():
 
 def test_sync_page_attachments():
     plugin = ConfluencePlugin()
-    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
-    plugin.page_ids = {("test-page", "parent-123"): "page-123"}
+    plugin.auth_configured = True  # Enable authentication for test
     plugin.add_or_update_attachment = Mock()
 
-    # Mock os.walk to find matching attachments
-    with patch("os.walk") as mock_walk:
-        mock_walk.return_value = [("docs", [], ["test_page_image.png", "other.txt"])]
+    # Create mock attachments list
+    attachments = [Path("/path/to/image.png")]
+    
+    plugin.sync_page_attachments("page-123", attachments)
 
-        plugin.sync_page_attachments("Test Page", "parent-123")
-
-    plugin.add_or_update_attachment.assert_called_once()
+    plugin.add_or_update_attachment.assert_called_once_with("page-123", Path("/path/to/image.png"))
 
 
 def test_build_and_publish_tree_with_fallback():
@@ -733,17 +757,18 @@ def test_create_or_update_page_with_attachments():
     plugin.space = "TEST"
     plugin.dryrun = False
     plugin.page_ids = {}
+    plugin.collect_page_attachments = Mock(return_value=[Path("file1.png")])
     plugin.sync_page_attachments = Mock()
 
     result = plugin.create_or_update_page(
         title="Test Page",
         body="<p>content</p>",
-        attachments=["file1.png"],
         abs_src_path="/path/to/source.md",
     )
 
     assert result == "new-123"
-    plugin.sync_page_attachments.assert_called_once()
+    plugin.collect_page_attachments.assert_called_once_with("/path/to/source.md", "<p>content</p>")
+    plugin.sync_page_attachments.assert_called_once_with("new-123", [Path("file1.png")])
 
 
 def test_create_or_update_page_update_existing():
@@ -886,35 +911,24 @@ def test_on_config_sets_confluence(monkeypatch, plugin):
 def test_sync_page_attachments_calls_add_or_update_attachment(
     monkeypatch, tmp_path, plugin
 ):
-    subdir = tmp_path / "images"
-    subdir.mkdir()
-    img_file = subdir / "parent_page_image.png"
+    # Setup authentication for test
+    plugin.auth_configured = True
+    
+    # Create test attachment
+    img_file = tmp_path / "image.png"
     img_file.write_bytes(b"dummy image data")
-
-    # Mock os.walk to simulate the file tree
-    monkeypatch.setattr(
-        "os.walk",
-        lambda root: [
-            (str(subdir), [], ["parent_page_image.png"]),
-            (str(tmp_path), ["images"], ["other.txt"]),
-        ],
-    )
-
-    # ✅ Provide a valid page ID for the test
-    plugin.page_ids[("parentpage", None)] = "mock-page-id"
-
-    # ✅ Mock Confluence object to prevent actual API calls
-    plugin.confluence = Mock()
-    plugin.confluence.cql.return_value = {"results": []}
-
-    # ✅ Replace the method under test with a Mock so we can assert it's called
+    
+    # Mock the add_or_update_attachment method
     plugin.add_or_update_attachment = Mock()
 
-    # Act
-    plugin.sync_page_attachments("Parent Page", parent_id=None)
+    # Create attachments list
+    attachments = [img_file]
+    
+    # Act - use new API signature
+    plugin.sync_page_attachments("mock-page-id", attachments)
 
     # Assert
-    plugin.add_or_update_attachment.assert_called_once()
+    plugin.add_or_update_attachment.assert_called_once_with("mock-page-id", img_file)
 
 
 def test_on_nav_builds_tab_nav(plugin):
@@ -1603,33 +1617,30 @@ def test_find_page_id_with_content_structure():
     assert result == "page-123"
 
 
-def test_sync_page_attachments_no_page_id():
-    """Test sync_page_attachments when page ID cannot be found"""
+def test_sync_page_attachments_no_attachments():
+    """Test sync_page_attachments when no attachments are provided"""
     plugin = ConfluencePlugin()
-    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
-    plugin.page_ids = {}
-    plugin.find_page_id = Mock(return_value=None)
+    plugin.auth_configured = True
+    plugin.add_or_update_attachment = Mock()
 
-    with patch("mkdocs_confluence_plugin.plugin.log") as mock_log:
-        plugin.sync_page_attachments("Test Page", "parent-123")
+    # Test with empty attachments list
+    plugin.sync_page_attachments("page-123", [])
 
-    mock_log.warning.assert_called()
+    # Should not call add_or_update_attachment for empty list
+    plugin.add_or_update_attachment.assert_not_called()
 
 
 def test_add_or_update_attachment_no_page_id():
-    """Test add_or_update_attachment when page ID cannot be found"""
+    """Test add_or_update_attachment when page ID is None or empty"""
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com"}
-    plugin.parent_page_id = "parent-123"
-    plugin._cache_key = Mock(return_value=("test-page", "parent-123"))
-    plugin.page_ids = {}
-    plugin.find_page_id = Mock(return_value=None)
+    plugin.auth_configured = True
 
     with tempfile.NamedTemporaryFile(suffix=".png") as tmp_file:
         tmp_path = Path(tmp_file.name)
 
         with patch("mkdocs_confluence_plugin.plugin.log") as mock_log:
-            plugin.add_or_update_attachment("Test Page", tmp_path)
+            plugin.add_or_update_attachment(None, tmp_path)
 
     mock_log.error.assert_called()
 

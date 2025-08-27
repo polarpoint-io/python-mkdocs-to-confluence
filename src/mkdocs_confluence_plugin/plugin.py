@@ -81,6 +81,7 @@ class ConfluencePlugin(BasePlugin):
         self.dryrun = False
         self.tab_nav = []
         self.attachments = {}
+        self.auth_configured = False
 
     def normalize_title_key(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -207,6 +208,10 @@ class ConfluencePlugin(BasePlugin):
             username=plugin_cfg["username"],
             password=plugin_cfg["password"],
         )
+
+        # Configure session for attachment uploads
+        self.session.auth = (plugin_cfg["username"], plugin_cfg["password"])
+        self.auth_configured = True
 
         self.default_labels = plugin_cfg.get("default_labels", ["cpe", "mkdocs"])
         self.dryrun = plugin_cfg.get("dryrun", False)
@@ -694,8 +699,10 @@ class ConfluencePlugin(BasePlugin):
                 self.dryrun_log("create", title, parent_id)
 
         # Attachments handling
-        if attachments and abs_src_path and not self.dryrun:
-            self.sync_page_attachments(page_id, abs_src_path, attachments)
+        if abs_src_path and not self.dryrun:
+            attachments = self.collect_page_attachments(abs_src_path, body)
+            if attachments:
+                self.sync_page_attachments(page_id, attachments)
 
         self.page_ids[key] = page_id
         return page_id
@@ -960,90 +967,144 @@ class ConfluencePlugin(BasePlugin):
             self.page_ids[(norm_title, None)] = page_id
         return page_id
 
-    def sync_page_attachments(self, page_title, parent_id):
-        normalized_title = page_title.lower().replace(" ", "_")
-        cache_key = self._cache_key(page_title, parent_id)
-        page_id = self.page_ids.get(cache_key) or self.find_page_id(
-            page_title, parent_id
-        )
-        if not page_id:
-            log.warning(
-                f"Attachment sync skipped: Page ID for '{page_title}' with parent '{parent_id}' not found"
-            )
-            return
-        for root, _, files in os.walk("docs"):
-            for file in files:
-                if file.lower().endswith(
-                    (".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")
-                ):
-                    filepath = Path(root) / file
-                    if normalized_title in filepath.stem.lower().replace(" ", "_"):
-                        self.add_or_update_attachment(page_title, filepath)
-
-    def add_or_update_attachment(self, page_title, filepath):
-        log.info(f"Handling attachment for page '{page_title}': file '{filepath.name}'")
-        cache_key = self._cache_key(page_title, self.parent_page_id)
-        page_id = self.page_ids.get(cache_key) or self.find_page_id(
-            page_title, self.parent_page_id
-        )
-        if not page_id:
-            log.error(
-                f"Cannot find Confluence page id for '{page_title}'. Attachment skipped."
-            )
-            return
-
-        file_hash = self.get_file_sha1(filepath)
-        attachment_comment = f"ConfluencePlugin [v{file_hash}]"
-
-        existing_attachment = self.get_attachment(page_id, filepath)
-        if existing_attachment:
-            file_hash_regex = re.compile(r"\[v([a-f0-9]+)\]")
-            current_hash_match = file_hash_regex.search(
-                existing_attachment.get("metadata", {}).get("comment", "")
-            )
-            if current_hash_match and current_hash_match.group(1) == file_hash:
-                log.info(
-                    f"Attachment '{filepath.name}' is up-to-date. Skipping upload."
-                )
-                return
+    def collect_page_attachments(self, src_path, content):
+        """Collect attachment files referenced in the markdown content."""
+        import re
+        from pathlib import Path
+        
+        attachments = []
+        if not src_path:
+            return attachments
+            
+        src_dir = Path(src_path).parent
+        
+        # Find markdown image references: ![alt](path) and ![alt](path "title")
+        img_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+        matches = re.findall(img_pattern, content)
+        
+        for alt_text, img_path in matches:
+            # Remove any quotes and title text
+            img_path = img_path.split('"')[0].strip()
+            
+            # Skip external URLs
+            if img_path.startswith(('http://', 'https://', '//')):
+                continue
+                
+            # Handle relative paths
+            if img_path.startswith('./'):
+                img_path = img_path[2:]
+            elif img_path.startswith('../'):
+                # Handle parent directory references
+                img_file = src_dir / img_path
             else:
-                self.delete_attachment(existing_attachment["id"])
-                log.info(f"Deleted outdated attachment '{filepath.name}'.")
+                # Try both relative to source file and relative to docs root
+                img_file = src_dir / img_path
+                if not img_file.exists():
+                    img_file = Path("docs") / img_path
+                    
+            if not img_path.startswith('../'):
+                img_file = src_dir / img_path
+                
+            # Check if file exists and is an image
+            if img_file.exists() and img_file.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.pdf', '.webp'):
+                attachments.append(img_file.resolve())
+                log.debug(f"Found attachment: {img_file}")
+            else:
+                log.warning(f"Referenced image not found: {img_path} (resolved to {img_file})")
+                
+        return attachments
 
-        self.upload_attachment(page_id, filepath, attachment_comment)
+    def sync_page_attachments(self, page_id, attachments):
+        """Sync attachments for a page."""
+        if not self.auth_configured:
+            log.warning("Authentication not configured for attachment uploads")
+            return
+            
+        if not attachments:
+            return
+            
+        for attachment_path in attachments:
+            try:
+                self.add_or_update_attachment(page_id, attachment_path)
+            except Exception as e:
+                log.error(f"Failed to sync attachment {attachment_path}: {e}")
+
+    def add_or_update_attachment(self, page_id, filepath):
+        """Add or update an attachment for a page."""
+        if not self.auth_configured:
+            log.warning("Authentication not configured for attachment uploads")
+            return
+            
+        log.info(f"Handling attachment: file '{filepath.name}' for page ID {page_id}")
+        
+        if not page_id:
+            log.error("Cannot upload attachment: Page ID is missing")
+            return
+
+        try:
+            file_hash = self.get_file_sha1(filepath)
+            attachment_comment = f"ConfluencePlugin [v{file_hash}]"
+
+            existing_attachment = self.get_attachment(page_id, filepath)
+            if existing_attachment:
+                file_hash_regex = re.compile(r"\[v([a-f0-9]+)\]")
+                current_hash_match = file_hash_regex.search(
+                    existing_attachment.get("metadata", {}).get("comment", "")
+                )
+                if current_hash_match and current_hash_match.group(1) == file_hash:
+                    log.info(f"Attachment '{filepath.name}' is up-to-date. Skipping upload.")
+                    return
+                else:
+                    self.delete_attachment(existing_attachment["id"])
+                    log.info(f"Deleted outdated attachment '{filepath.name}'.")
+
+            self.upload_attachment(page_id, filepath, attachment_comment)
+        except Exception as e:
+            log.error(f"Error handling attachment {filepath}: {e}")
 
     def get_attachment(self, page_id, filepath):
-        url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
-        params = {"filename": filepath.name}
-        response = self.session.get(url, params=params)
-        if response.status_code == 200:
-            results = response.json().get("results", [])
-            if results:
-                return results[0]
+        """Get existing attachment by page ID and filename."""
+        try:
+            url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+            params = {"filename": filepath.name}
+            response = self.session.get(url, params=params)
+            if response.status_code == 200:
+                results = response.json().get("results", [])
+                if results:
+                    return results[0]
+            elif response.status_code != 404:
+                log.warning(f"Failed to check existing attachment (status {response.status_code}): {response.text}")
+        except Exception as e:
+            log.error(f"Error checking existing attachment: {e}")
         return None
 
     def upload_attachment(self, page_id, filepath, comment):
-        url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
-        with open(filepath, "rb") as f:
-            files = {"file": (filepath.name, f, mimetypes.guess_type(filepath.name)[0])}
-            data = {"comment": comment}
-            response = self.session.post(url, files=files, data=data)
-        if response.status_code in (200, 201):
-            log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
-        else:
-            log.error(
-                f"Failed to upload attachment '{filepath.name}' (status {response.status_code})."
-            )
+        """Upload an attachment to a page."""
+        try:
+            url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+            with open(filepath, "rb") as f:
+                files = {"file": (filepath.name, f, mimetypes.guess_type(filepath.name)[0])}
+                data = {"comment": comment}
+                response = self.session.post(url, files=files, data=data)
+            
+            if response.status_code in (200, 201):
+                log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
+            else:
+                log.error(f"Failed to upload attachment '{filepath.name}' (status {response.status_code}): {response.text}")
+        except Exception as e:
+            log.error(f"Error uploading attachment {filepath}: {e}")
 
     def delete_attachment(self, attachment_id):
-        url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
-        response = self.session.delete(url)
-        if response.status_code == 204:
-            log.info(f"Deleted attachment ID {attachment_id}.")
-        else:
-            log.error(
-                f"Failed to delete attachment ID {attachment_id} (status {response.status_code})."
-            )
+        """Delete an attachment by ID."""
+        try:
+            url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
+            response = self.session.delete(url)
+            if response.status_code == 204:
+                log.info(f"Deleted attachment ID {attachment_id}.")
+            else:
+                log.error(f"Failed to delete attachment ID {attachment_id} (status {response.status_code}): {response.text}")
+        except Exception as e:
+            log.error(f"Error deleting attachment {attachment_id}: {e}")
 
     def debug_dump_pages(self):
         if not self.pages:
