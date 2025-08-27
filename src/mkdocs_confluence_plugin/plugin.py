@@ -1065,7 +1065,9 @@ class ConfluencePlugin(BasePlugin):
     def get_attachment(self, page_id, filepath):
         """Get existing attachment by page ID and filename."""
         try:
-            url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+            # Use base URL without /rest/api/content since we add it below
+            base_url = self.config['host_url'].replace('/rest/api/content', '')
+            url = f"{base_url}/rest/api/content/{page_id}/child/attachment"
             params = {"filename": filepath.name}
             response = self.session.get(url, params=params)
             if response.status_code == 200:
@@ -1081,11 +1083,19 @@ class ConfluencePlugin(BasePlugin):
     def upload_attachment(self, page_id, filepath, comment):
         """Upload an attachment to a page."""
         try:
-            url = f"{self.config['host_url']}/rest/api/content/{page_id}/child/attachment"
+            # Use base URL without /rest/api/content since we add it below
+            base_url = self.config['host_url'].replace('/rest/api/content', '')
+            url = f"{base_url}/rest/api/content/{page_id}/child/attachment"
+            
+            # Set headers for Confluence Cloud API
+            headers = {
+                'X-Atlassian-Token': 'no-check',  # Disable XSRF check
+            }
+            
             with open(filepath, "rb") as f:
                 files = {"file": (filepath.name, f, mimetypes.guess_type(filepath.name)[0])}
                 data = {"comment": comment}
-                response = self.session.post(url, files=files, data=data)
+                response = self.session.post(url, files=files, data=data, headers=headers)
             
             if response.status_code in (200, 201):
                 log.info(f"Uploaded attachment '{filepath.name}' to page ID {page_id}.")
@@ -1097,7 +1107,9 @@ class ConfluencePlugin(BasePlugin):
     def delete_attachment(self, attachment_id):
         """Delete an attachment by ID."""
         try:
-            url = f"{self.config['host_url']}/rest/api/content/{attachment_id}"
+            # Use base URL without /rest/api/content since we add it below
+            base_url = self.config['host_url'].replace('/rest/api/content', '')
+            url = f"{base_url}/rest/api/content/{attachment_id}"
             response = self.session.delete(url)
             if response.status_code == 204:
                 log.info(f"Deleted attachment ID {attachment_id}.")
