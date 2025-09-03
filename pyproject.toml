@@ -22,7 +22,8 @@ dependencies = [
     "mime",
     "pre-commit",
     "mkdocs",
-    "atlassian-python-api"
+    "atlassian-python-api",
+    "Cython"
 ]
 
 [tool.setuptools]
