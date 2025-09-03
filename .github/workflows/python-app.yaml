@@ -44,7 +44,7 @@ jobs:
       - name: Install dependencies from pyproject.toml
         run: |
             python -m pip install --upgrade pip wheel setuptools black
-            pip install .  # This installs the current package from pyproject.toml
+            pip install --prefer-binary .  # Prefer binary wheels to avoid source build errors
 
       - name: Format code with Black
         run: black --check --diff ${{ inputs.source_dir }} || echo "Formatting issues found, see diff above"
