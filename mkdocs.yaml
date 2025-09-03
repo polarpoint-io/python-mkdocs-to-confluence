@@ -1,5 +1,5 @@
 site_name: Root docs
-repo_url: https://github.com/NewDay-Data/python-repository-template
+repo_url: https://github.com/polarpoint-io/python-mkdocs-to-confluence
 edit_uri: edit/main/docs
 
 nav:
