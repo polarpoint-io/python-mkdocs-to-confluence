@@ -9,7 +9,7 @@ description = "MkDocs plugin to export to Confluence"
 readme = "README.md"
 requires-python = ">=3.7"
 authors = [
-    { name = "Your Name", email = "surjit.bains@gmail.com" }
+    { name = "Surj Bains", email = "surjit.bains@gmail.com" }
 ]
 dependencies = [
     "pytest==8.0.0",

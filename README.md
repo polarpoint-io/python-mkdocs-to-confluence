@@ -110,7 +110,7 @@ plugins:
       host_url: https://your-domain.atlassian.net/wiki/rest/api/content
       space: YOUR_SPACE_KEY
       parent_page_name: 'Documentation Root'
-      github_base_url: "https://github.com/your-org/your-repo/blob/main"
+      git_base_url: "https://github.com/your-org/your-repo/blob/main"
       enable_footer: true
       enabled_if_env: MKDOCS_TO_CONFLUENCE
       dryrun: false
@@ -125,7 +125,7 @@ plugins:
 | `host_url` | Confluence API endpoint URL | | ✅ |
 | `space` | Confluence space key | | ✅ |
 | `parent_page_name` | Parent page name in Confluence | | ✅ |
-| `github_base_url` | Base URL for GitHub edit links | | |
+| `git_base_url` | Base URL for Git Server edit links | | |
 | `enable_footer` | Add footer with edit links | `false` | |
 | `enabled_if_env` | Environment variable to enable plugin | | |
 | `dryrun` | Test mode without publishing | `false` | |

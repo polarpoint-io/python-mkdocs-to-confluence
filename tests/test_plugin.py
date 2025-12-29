@@ -294,7 +294,7 @@ def test_on_page_content_with_footer():
     plugin = ConfluencePlugin()
     plugin.config = {
         "enable_footer": True,
-        "github_base_url": "https://github.com/user/repo",
+        "git_base_url": "https://github.com/user/repo",
     }
     plugin.page_lookup = {}  # Initialize page_lookup
 
@@ -307,7 +307,7 @@ def test_on_page_content_with_footer():
     result = plugin.on_page_content(html, mock_page, {}, [])
 
     assert "github.com/user/repo/docs/test.md" in result
-    assert "View source on GitHub" in result
+    assert "edit source" in result
     assert html in result
 
 
@@ -323,7 +323,7 @@ def test_on_page_content_footer_disabled():
 
 def test_on_page_content_missing_github_url():
     plugin = ConfluencePlugin()
-    plugin.config = {"enable_footer": True}  # Missing github_base_url
+    plugin.config = {"enable_footer": True}  # Missing git_base_url
 
     html = "<p>Original content</p>"
     result = plugin.on_page_content(html, Mock(), {}, [])
@@ -1032,7 +1032,7 @@ def test_on_nav_builds_tab_nav(plugin):
 
 def test_on_page_content_footer(plugin):
     plugin.config = {
-        "github_base_url": "https://github.com/repo",
+        "git_base_url": "https://github.com/repo",
         "enable_footer": True,
         "username": "user",
         "password": "pass",

@@ -49,7 +49,7 @@ class DummyFile:
 class ConfluencePlugin(BasePlugin):
     config_scheme = (
         ("host_url", config_options.Type(str, default=None)),
-        ("github_base_url", config_options.Type(str, default=None)),
+        ("git_base_url", config_options.Type(str, default=None)),
         ("space", config_options.Type(str, default=None)),
         ("parent_page_name", config_options.Type(str, default=None)),
         (
@@ -495,16 +495,16 @@ class ConfluencePlugin(BasePlugin):
             log.debug("🚫 Footer disabled")
             return html
 
-        github_base_url = self.config.get("github_base_url")
-        if not github_base_url:
-            log.warning("⚠️ Missing github_base_url - footer cannot be generated")
+        git_base_url = self.config.get("git_base_url")
+        if not git_base_url:
+            log.warning("⚠️ Missing git_base_url - footer cannot be generated")
             return html
 
         if not hasattr(page.file, "src_uri"):
             log.warning("❌ No src_uri on page.file - footer cannot be generated")
             return html
 
-        footer = f'<p><em><a href="{github_base_url}/{page.file.src_uri}">View source on GitHub</a></em></p>'
+        footer = f'<p><em><a href="{git_base_url}/{page.file.src_uri}">edit source</a></em></p>'
         log.debug(f"✅ Adding footer: {footer}")
 
         # Store the footer in page_lookup for later use in Confluence
