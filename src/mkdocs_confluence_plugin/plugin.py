@@ -64,8 +64,11 @@ class ConfluencePlugin(BasePlugin):
         ("verbose", config_options.Type(bool, default=False)),
         ("debug", config_options.Type(bool, default=False)),
         ("dryrun", config_options.Type(bool, default=False)),
+        ("enable_header", config_options.Type(bool, default=False)),
         ("enable_footer", config_options.Type(bool, default=False)),
-        ("default_labels", config_options.Type(list, default=["cpe", "mkdocs"])),
+        ("header_text", config_options.Type(str, default="Auto-updated - {edit_link}")),
+        ("footer_text", config_options.Type(str, default="Auto-updated - {edit_link}")),
+        ("default_labels", config_options.Type(list, default=["pe", "mkdocs"])),
     )
 
     def __init__(self):
@@ -488,31 +491,61 @@ class ConfluencePlugin(BasePlugin):
         return markdown  # Let MkDocs proceed as usual
 
     def on_page_content(self, html, page, config, files):
-        """Process page content and add footer if enabled."""
+        """Process page content and add header/footer if enabled."""
         log.debug("🧪 on_page_content called")
 
-        if not self.config.get("enable_footer"):
-            log.debug("🚫 Footer disabled")
+        enable_header = self.config.get("enable_header")
+        enable_footer = self.config.get("enable_footer")
+
+        if not enable_header and not enable_footer:
+            log.debug("🚫 Header and footer disabled")
             return html
 
         git_base_url = self.config.get("git_base_url")
         if not git_base_url:
-            log.warning("⚠️ Missing git_base_url - footer cannot be generated")
+            parts = []
+            if enable_header:
+                parts.append("header")
+            if enable_footer:
+                parts.append("footer")
+            log.warning(f"⚠️ Missing git_base_url - {'/'.join(parts)} cannot be generated")
             return html
 
         if not hasattr(page.file, "src_uri"):
-            log.warning("❌ No src_uri on page.file - footer cannot be generated")
+            parts = []
+            if enable_header:
+                parts.append("header")
+            if enable_footer:
+                parts.append("footer")
+            log.warning(f"❌ No src_uri on page.file - {'/'.join(parts)} cannot be generated")
             return html
 
-        footer = f'<p><em><a href="{git_base_url}/{page.file.src_uri}">edit source</a></em></p>'
-        log.debug(f"✅ Adding footer: {footer}")
+        edit_link_html = f'<a href="{git_base_url}/{page.file.src_uri}">edit source</a>'
+        
+        header = ""
+        footer = ""
+        
+        if enable_header:
+            header_text = self.config.get("header_text", "Auto-updated - {edit_link}")
+            header_content = header_text.replace("{edit_link}", edit_link_html)
+            header = f'<p><em>{header_content}</em></p>'
+            log.debug(f"✅ Adding header: {header}")
+        
+        if enable_footer:
+            footer_text = self.config.get("footer_text", "Auto-updated - {edit_link}")
+            footer_content = footer_text.replace("{edit_link}", edit_link_html)
+            footer = f'<p><em>{footer_content}</em></p>'
+            log.debug(f"✅ Adding footer: {footer}")
 
-        # Store the footer in page_lookup for later use in Confluence
+        # Store the header and footer in page_lookup for later use in Confluence
         title_key = self.normalize_title_key(page.title)
         if title_key in self.page_lookup:
-            self.page_lookup[title_key]["footer"] = footer
+            if header:
+                self.page_lookup[title_key]["header"] = header
+            if footer:
+                self.page_lookup[title_key]["footer"] = footer
 
-        return html + footer
+        return header + html + footer
 
     def debug_dump_page_parents(self):
         print("🔍 Page parent mapping:")
@@ -585,7 +618,7 @@ class ConfluencePlugin(BasePlugin):
                     )
                     # Re-read the current file content to see what PlantUML might have generated
                     if src_path and Path(src_path).exists():
-                        current_content = Path(src_path).read_text()
+                        current_content = Path(src_path).read_text(encoding='utf-8')
                         attachments = self.collect_page_attachments(
                             src_path, current_content
                         )
@@ -735,10 +768,12 @@ class ConfluencePlugin(BasePlugin):
                     page_info = info
                     break
 
-        # Add footer to body if it exists
+        # Add header and footer to body if they exist
         final_body = body
-        if page_info and page_info.get("footer") and not is_folder:
-            final_body = body + page_info["footer"]
+        if page_info and not is_folder:
+            header = page_info.get("header", "")
+            footer = page_info.get("footer", "")
+            final_body = header + body + footer
 
         # Extract metadata for labels
         page_meta = page_info.get("meta", {}) if page_info else {}
@@ -772,7 +807,7 @@ class ConfluencePlugin(BasePlugin):
             # Store the original markdown content before any plugins modify it
             original_content = None
             if abs_src_path and Path(abs_src_path).exists():
-                original_content = Path(abs_src_path).read_text()
+                original_content = Path(abs_src_path).read_text(encoding='utf-8')
 
             # Store attachment info for deferred processing
             attachment_info = {

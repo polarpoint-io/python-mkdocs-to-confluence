@@ -111,7 +111,10 @@ plugins:
       space: YOUR_SPACE_KEY
       parent_page_name: 'Documentation Root'
       git_base_url: "https://github.com/your-org/your-repo/blob/main"
+      enable_header: true
       enable_footer: true
+      header_text: "Auto-updated - {edit_link}"
+      footer_text: "Auto-updated - {edit_link}"
       enabled_if_env: MKDOCS_TO_CONFLUENCE
       dryrun: false
       debug: true
@@ -126,7 +129,10 @@ plugins:
 | `space` | Confluence space key | | ✅ |
 | `parent_page_name` | Parent page name in Confluence | | ✅ |
 | `git_base_url` | Base URL for Git Server edit links | | |
+| `enable_header` | Add header with edit links | `false` | |
 | `enable_footer` | Add footer with edit links | `false` | |
+| `header_text` | Custom header text (`{edit_link}` placeholder) | `"Auto-updated - {edit_link}"` | |
+| `footer_text` | Custom footer text (`{edit_link}` placeholder) | `"Auto-updated - {edit_link}"` | |
 | `enabled_if_env` | Environment variable to enable plugin | | |
 | `dryrun` | Test mode without publishing | `false` | |
 | `debug` | Enable debug logging | `false` | |

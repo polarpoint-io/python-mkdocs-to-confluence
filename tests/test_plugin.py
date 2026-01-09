@@ -42,7 +42,10 @@ def plugin_with_config():
         "parent_page_name": None,
         "debug": True,
         "dryrun": False,
+        "enable_header": False,
         "enable_footer": True,
+        "header_text": "Auto-updated - {edit_link}",
+        "footer_text": "Auto-updated - {edit_link}",
         "default_labels": ["test", "mkdocs"],
         "enabled_if_env": None,
     }
@@ -293,7 +296,9 @@ def test_on_page_markdown():
 def test_on_page_content_with_footer():
     plugin = ConfluencePlugin()
     plugin.config = {
+        "enable_header": False,
         "enable_footer": True,
+        "footer_text": "Auto-updated - {edit_link}",
         "git_base_url": "https://github.com/user/repo",
     }
     plugin.page_lookup = {}  # Initialize page_lookup
@@ -309,11 +314,13 @@ def test_on_page_content_with_footer():
     assert "github.com/user/repo/docs/test.md" in result
     assert "edit source" in result
     assert html in result
+    # Footer should be at the end
+    assert result.endswith("</p>")
 
 
 def test_on_page_content_footer_disabled():
     plugin = ConfluencePlugin()
-    plugin.config = {"enable_footer": False}
+    plugin.config = {"enable_header": False, "enable_footer": False}
 
     html = "<p>Original content</p>"
     result = plugin.on_page_content(html, Mock(), {}, [])
@@ -323,12 +330,91 @@ def test_on_page_content_footer_disabled():
 
 def test_on_page_content_missing_github_url():
     plugin = ConfluencePlugin()
-    plugin.config = {"enable_footer": True}  # Missing git_base_url
+    plugin.config = {
+        "enable_header": True,
+        "enable_footer": True,
+    }  # Missing git_base_url
 
     html = "<p>Original content</p>"
     result = plugin.on_page_content(html, Mock(), {}, [])
 
     assert result == html
+
+
+def test_on_page_content_with_header():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "enable_header": True,
+        "enable_footer": False,
+        "header_text": "Auto-updated - {edit_link}",
+        "git_base_url": "https://github.com/user/repo",
+    }
+    plugin.page_lookup = {}
+
+    mock_page = Mock()
+    mock_page.file.src_uri = "docs/test.md"
+    mock_page.title = "Test Page"
+
+    html = "<p>Original content</p>"
+
+    result = plugin.on_page_content(html, mock_page, {}, [])
+
+    assert "github.com/user/repo/docs/test.md" in result
+    assert "edit source" in result
+    assert html in result
+    # Header should be at the beginning
+    assert result.startswith("<p>")
+
+
+def test_on_page_content_with_header_and_footer():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "enable_header": True,
+        "enable_footer": True,
+        "header_text": "Header text - {edit_link}",
+        "footer_text": "Footer text - {edit_link}",
+        "git_base_url": "https://github.com/user/repo",
+    }
+    plugin.page_lookup = {}
+
+    mock_page = Mock()
+    mock_page.file.src_uri = "docs/test.md"
+    mock_page.title = "Test Page"
+
+    html = "<p>Original content</p>"
+
+    result = plugin.on_page_content(html, mock_page, {}, [])
+
+    assert "github.com/user/repo/docs/test.md" in result
+    assert "Header text" in result
+    assert "Footer text" in result
+    assert html in result
+    # Both header and footer should be present
+    assert result.count("edit source") == 2
+
+
+def test_on_page_content_custom_header_footer_text():
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "enable_header": True,
+        "enable_footer": True,
+        "header_text": "Generated from source - {edit_link}",
+        "footer_text": "Last updated from {edit_link}",
+        "git_base_url": "https://github.com/user/repo",
+    }
+    plugin.page_lookup = {}
+
+    mock_page = Mock()
+    mock_page.file.src_uri = "docs/custom.md"
+    mock_page.title = "Custom Page"
+
+    html = "<p>Content here</p>"
+
+    result = plugin.on_page_content(html, mock_page, {}, [])
+
+    assert "Generated from source" in result
+    assert "Last updated from" in result
+    assert result.count("edit source") == 2
 
 
 def test_create_page_success():
@@ -1033,7 +1119,9 @@ def test_on_nav_builds_tab_nav(plugin):
 def test_on_page_content_footer(plugin):
     plugin.config = {
         "git_base_url": "https://github.com/repo",
+        "enable_header": False,
         "enable_footer": True,
+        "footer_text": "Auto-updated - {edit_link}",
         "username": "user",
         "password": "pass",
         "space": "TEST",
