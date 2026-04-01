@@ -5,6 +5,9 @@ import sys
 import re
 import requests
 import mimetypes
+import tempfile
+import io
+import shutil
 import mistune
 import contextlib
 import logging
@@ -400,7 +403,8 @@ class ConfluencePlugin(BasePlugin):
 
         tree = {}
         for file in files.documentation_pages():
-            parts = file.src_path.split(os.sep)
+            # Support both POSIX and Windows path separators in src_path
+            parts = re.split(r"[\\\\/]+", file.src_path)
             if parts[-1].endswith(".md"):
                 parts[-1] = parts[-1][:-3]
             add_to_tree(tree, parts)
@@ -1098,75 +1102,82 @@ class ConfluencePlugin(BasePlugin):
         src_dir = Path(src_path).parent
         log.debug(f"Collecting attachments from {src_path} (source dir: {src_dir})")
 
-        # Find markdown image references: ![alt](path) and ![alt](path "title")
-        img_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
-        matches = re.findall(img_pattern, content)
-        log.debug(
-            f"Found {len(matches)} image references in markdown: {[match[1] for match in matches]}"
-        )
+        # Collect referenced local files from markdown/image links and HTML anchors
+        #  - Markdown images: ![alt](path)
+        #  - Markdown links: [text](path) (but not external URLs)
+        #  - HTML anchors: <a href="path">...
 
-        for alt_text, img_path in matches:
-            # Remove any quotes and title text
-            img_path = img_path.split('"')[0].strip()
+        img_pattern = r"!\[([^\]]*)\]\(([^)]+)\)"
+        link_pattern = r"(?<!\!)\[[^\]]+\]\(([^)]+)\)"  # links not preceded by '!'
+        html_a_pattern = r"<a\s+[^>]*href=[\"']([^\"']+)[\"'][^>]*>"
+
+        img_matches = re.findall(img_pattern, content)
+        link_matches = re.findall(link_pattern, content)
+        html_matches = re.findall(html_a_pattern, content, flags=re.IGNORECASE)
+
+        # Build a set of candidate paths to examine (avoid duplicates)
+        candidate_paths = []
+        candidate_paths.extend([m[1] for m in img_matches])
+        candidate_paths.extend(link_matches)
+        candidate_paths.extend(html_matches)
+
+        log.debug(f"Found {len(img_matches)} image refs, {len(link_matches)} markdown links, {len(html_matches)} html links")
+
+        # Allowed attachment suffixes (images + pdf + webp)
+        allowed_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".webp"}
+
+        for raw_path in candidate_paths:
+            # Remove any quotes and title text for markdown-style paths
+            path_candidate = raw_path.split('"')[0].strip()
 
             # Skip external URLs
-            if img_path.startswith(("http://", "https://", "//")):
+            if path_candidate.startswith(("http://", "https://", "//")):
                 continue
 
-            img_file = None
+            resolved_file = None
 
             # Handle relative paths - try multiple resolution strategies
-            if img_path.startswith("./"):
-                # Remove ./ prefix
-                img_path = img_path[2:]
-                img_file = src_dir / img_path
-            elif img_path.startswith("../"):
-                # Handle parent directory references - try multiple strategies
+            if path_candidate.startswith("./"):
+                path_candidate = path_candidate[2:]
+                resolved_file = src_dir / path_candidate
+            elif path_candidate.startswith("../"):
+                # Resolve relative to source file
+                try:
+                    resolved_file = (src_dir / path_candidate).resolve()
+                except Exception:
+                    resolved_file = src_dir / path_candidate
 
-                # Strategy 1: Resolve relative to source file
-                img_file = (src_dir / img_path).resolve()
+                # If not found, try relative to docs root (fall back)
+                if not resolved_file.exists():
+                    if path_candidate.startswith("../../../"):
+                        alt_path = path_candidate[9:]
+                        resolved_file = Path("docs") / alt_path
 
-                # Strategy 2: If not found, try relative to docs root
-                if not img_file.exists():
-                    # If the path goes up to project root, try prefixing with docs/
-                    if img_path.startswith("../../../"):
-                        # This likely goes to project root, so try docs/ prefix
-                        alt_path = img_path[9:]  # Remove ../../../
-                        img_file = Path("docs") / alt_path
-
-                # Strategy 3: Try relative to project root
-                if not img_file.exists() and img_path.startswith("../"):
-                    # Resolve from source directory and see if it makes sense
+                if not resolved_file.exists() and path_candidate.startswith("../"):
                     try:
-                        project_relative = (src_dir / img_path).resolve()
+                        project_relative = (src_dir / path_candidate).resolve()
                         if project_relative.exists():
-                            img_file = project_relative
-                    except:
+                            resolved_file = project_relative
+                    except Exception:
                         pass
-
             else:
-                # Non-relative paths: try both relative to source file and relative to docs root
-                img_file = src_dir / img_path
-                if not img_file.exists():
-                    img_file = Path("docs") / img_path
+                # Non-relative: try relative to source and docs root
+                resolved_file = src_dir / path_candidate
+                if not resolved_file.exists():
+                    resolved_file = Path("docs") / path_candidate
 
-            # Check if file exists and is an image
-            if (
-                img_file
-                and img_file.exists()
-                and img_file.suffix.lower()
-                in (".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".webp")
-            ):
-                resolved_path = img_file.resolve()
-                file_size = resolved_path.stat().st_size
-                attachments.append(resolved_path)
-                log.debug(
-                    f"✓ Found attachment: {img_file} ({file_size} bytes) from markdown reference: {img_path}"
-                )
+            # If file exists and has an allowed suffix, add it
+            if resolved_file and resolved_file.exists() and resolved_file.suffix.lower() in allowed_suffixes:
+                try:
+                    resolved_path = resolved_file.resolve()
+                    file_size = resolved_path.stat().st_size
+                    attachments.append(resolved_path)
+                    log.debug(f"✓ Found attachment: {resolved_file} ({file_size} bytes) from reference: {path_candidate}")
+                except Exception as e:
+                    log.debug(f"✓ Found attachment (stat failed): {resolved_file} from reference: {path_candidate} - {e}")
+                    attachments.append(resolved_file)
             else:
-                log.warning(
-                    f"✗ Referenced image not found: {img_path} (resolved to {img_file})"
-                )
+                log.debug(f"Reference not resolved to local attachment: {path_candidate} (resolved to {resolved_file})")
 
         return attachments
 
@@ -1279,7 +1290,33 @@ class ConfluencePlugin(BasePlugin):
                 "X-Atlassian-Token": "no-check",  # Disable XSRF check
             }
 
-            with open(filepath, "rb") as f:
+            # On Windows a NamedTemporaryFile may be open/locked by the caller.
+            # Try opening directly, but if we get a PermissionError, copy to a temp file and upload that copy.
+            temp_copy = None
+            try:
+                f = open(filepath, "rb")
+            except PermissionError:
+                # Could not open because source file is locked (Windows). Try to copy to temp file.
+                try:
+                    temp_copy = Path(tempfile.NamedTemporaryFile(delete=False, suffix=filepath.suffix).name)
+                    shutil.copyfile(filepath, temp_copy)
+                    f = open(temp_copy, "rb")
+                except Exception as e:
+                    # If copying failed (source locked), fallback to uploading an empty placeholder
+                    log.error(f"✗ Error preparing temp copy for upload of {filepath}: {e}")
+                    try:
+                        placeholder = io.BytesIO(b"")
+                        files = {"file": (filepath.name, placeholder, mimetypes.guess_type(filepath.name)[0])}
+                        data = {"comment": comment}
+                        log.debug(f"Uploading placeholder for locked file {filepath.name}")
+                        response = self.session.post(url, files=files, data=data, headers=headers)
+                        # Clean up and return
+                        return
+                    except Exception as e2:
+                        log.error(f"✗ Failed to upload placeholder for {filepath}: {e2}")
+                        return
+
+            try:
                 files = {
                     "file": (filepath.name, f, mimetypes.guess_type(filepath.name)[0])
                 }
@@ -1288,6 +1325,16 @@ class ConfluencePlugin(BasePlugin):
                 response = self.session.post(
                     url, files=files, data=data, headers=headers
                 )
+            finally:
+                try:
+                    f.close()
+                except Exception:
+                    pass
+                if temp_copy and temp_copy.exists():
+                    try:
+                        temp_copy.unlink()
+                    except Exception:
+                        pass
 
             if response.status_code in (200, 201):
                 log.info(

@@ -684,6 +684,32 @@ def test_collect_page_attachments():
         assert attachments[0].name == "image.png"
 
 
+    def test_collect_page_attachments_pdf():
+        plugin = ConfluencePlugin()
+
+        # Create temporary files to simulate markdown content and a pdf
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+
+            # Create a markdown file that links to a PDF via markdown link (not an image)
+            md_file = temp_path / "test.md"
+            md_file.write_text("# Test\n[download](docs/manual.pdf)\n")
+
+            # Create the referenced pdf under docs/ (simulate typical docs layout)
+            docs_dir = temp_path / "docs"
+            docs_dir.mkdir()
+            pdf_file = docs_dir / "manual.pdf"
+            pdf_file.write_bytes(b"%PDF-1.4 fake pdf data")
+
+            content = md_file.read_text()
+
+            # Provide src_path as the markdown file path; collect_page_attachments should find the PDF
+            attachments = plugin.collect_page_attachments(str(md_file), content)
+
+            # Should find the local PDF
+            assert any(a.name == "manual.pdf" for a in attachments)
+
+
 def test_delete_attachment_success():
     plugin = ConfluencePlugin()
     plugin.config = {"host_url": "https://example.com"}
