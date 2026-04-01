@@ -1,8 +1,5 @@
 # MkDocs Confluence Plugin
 
-**Version:** 1.26.0  
-**Python:** >=3.7  
-
 [![Python CI](https://img.shields.io/github/actions/workflow/status/polarpoint-io/python-mkdocs-to-confluence/python-app.yaml?branch=main&label=python%20ci)](https://github.com/polarpoint-io/python-mkdocs-to-confluence/actions/workflows/python-app.yaml)
 [![codecov](https://img.shields.io/codecov/c/github/polarpoint-io/python-mkdocs-to-confluence?branch=main&logo=codecov)](https://codecov.io/gh/polarpoint-io/python-mkdocs-to-confluence)
 [![PyPI version](https://img.shields.io/pypi/v/mkdocs_confluence_plugin.svg)](https://pypi.org/project/mkdocs_confluence_plugin/)
