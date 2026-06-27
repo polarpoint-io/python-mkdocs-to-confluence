@@ -177,17 +177,32 @@ Control Confluence-specific features per page via YAML frontmatter:
 | Key | Type | Description |
 |-----|------|-------------|
 | `toc` | `bool` | Prepend a Confluence Table of Contents macro |
-| `confluence_properties` | `dict` | Key/value pairs published as a Page Properties macro |
+| `confluence_properties` | `dict` | Key/value pairs published as a Page Properties macro (use on individual record pages) |
+| `confluence_page_properties_report` | `dict` | Inject a Page Properties Report macro that aggregates all pages with a given label into a live table (use on index/calendar pages) |
 | `labels` / `tags` | `list` | Additional labels applied to this page only |
 
 ```yaml
+# Individual change/record page
 ---
-title: My Page
-toc: true
+title: "CHG-0042 — Payment Gateway Upgrade"
 confluence_properties:
+  Change ID: CHG-0042
+  Date: 2026-07-15
   Owner: Alice
+  Risk: High
   Status: Approved
-labels: [runbook, critical]
+labels: [change-management, high-risk]
+---
+
+# Calendar / index page — aggregates all pages with that label
+---
+title: Forward Calendar of Change
+confluence_page_properties_report:
+  label: change-management
+  headings: [Change ID, Date, Window, Owner, Risk, Status]
+  sort_by: Date
+  space: "@self"   # optional, defaults to @self
+  max: 100         # optional, defaults to 50
 ---
 ```
 

@@ -411,15 +411,52 @@ class ConfluencePlugin(BasePlugin):
         ``confluence_properties:``
             Wraps a ``<table>`` of key/value pairs in the Confluence
             ``details`` (Page Properties) macro, prepended to the body.
-            Useful for Page Properties Reports.
+            Useful for individual change/record pages that feed a report.
 
-        Example frontmatter::
+        ``confluence_page_properties_report:``
+            Injects a Confluence Page Properties Report (``detailssummary``)
+            macro — aggregates all pages with a given label into a live table.
+            Ideal for a Forward Calendar of Change index page.
+
+            Supported sub-keys:
+
+            - ``label``       — label that child pages must carry (required
+                                unless ``cql`` is provided)
+            - ``cql``         — raw CQL query (overrides ``label``)
+            - ``headings``    — list or comma string of property columns to show
+            - ``space``       — space key to search; defaults to ``@self``
+            - ``sort_by``     — column name to sort the report by
+            - ``reverse_sort`` — ``true``/``false`` (default ``false``)
+            - ``max``         — max rows to display (default 50)
+
+        Example frontmatter for a calendar index page::
 
             ---
-            toc: true
+            title: Forward Calendar of Change
+            confluence_page_properties_report:
+              label: change-management
+              headings:
+                - Change ID
+                - Date
+                - Window
+                - Owner
+                - Risk
+                - Status
+              sort_by: Date
+            ---
+
+        Example frontmatter for an individual change page::
+
+            ---
+            title: "CHG-0042 — Payment Gateway Upgrade"
             confluence_properties:
+              Change ID: CHG-0042
+              Date: 2026-07-15
+              Window: "22:00–02:00 UTC"
               Owner: Alice
-              Status: In Review
+              Risk: High
+              Status: Approved
+            labels: [change-management, high-risk]
             ---
         """
         if not meta:
@@ -427,7 +464,7 @@ class ConfluencePlugin(BasePlugin):
 
         prefix = ""
 
-        # Page Properties macro
+        # Page Properties macro (individual record pages)
         props = meta.get("confluence_properties") or {}
         if props and isinstance(props, dict):
             rows = "".join(
@@ -440,6 +477,33 @@ class ConfluencePlugin(BasePlugin):
                 "</ac:rich-text-body>"
                 "</ac:structured-macro>"
             )
+
+        # Page Properties Report macro (index / calendar pages)
+        report = meta.get("confluence_page_properties_report") or {}
+        if report and isinstance(report, dict):
+            space = report.get("space", "@self")
+            label = report.get("label", "")
+            cql = report.get("cql", "")
+            headings = report.get("headings", [])
+            if isinstance(headings, list):
+                headings = ",".join(str(h) for h in headings)
+            sort_by = report.get("sort_by", "")
+            reverse_sort = str(report.get("reverse_sort", False)).lower()
+            max_results = int(report.get("max", 50))
+
+            params = f'<ac:parameter ac:name="spaces">{space}</ac:parameter>'
+            if cql:
+                params += f'<ac:parameter ac:name="cql">{cql}</ac:parameter>'
+            elif label:
+                params += f'<ac:parameter ac:name="label">{label}</ac:parameter>'
+            if headings:
+                params += f'<ac:parameter ac:name="headings">{headings}</ac:parameter>'
+            if sort_by:
+                params += f'<ac:parameter ac:name="sortBy">{sort_by}</ac:parameter>'
+            params += f'<ac:parameter ac:name="reverseSort">{reverse_sort}</ac:parameter>'
+            params += f'<ac:parameter ac:name="max">{max_results}</ac:parameter>'
+
+            prefix += f'<ac:structured-macro ac:name="detailssummary">{params}</ac:structured-macro>'
 
         # Table of Contents macro
         if meta.get("toc"):

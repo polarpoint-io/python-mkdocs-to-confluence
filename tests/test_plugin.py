@@ -367,6 +367,116 @@ def test_inject_toc_false_no_macro(plugin):
     assert 'ac:name="toc"' not in result
 
 
+# ---------------------------------------------------------------------------
+# _inject_page_meta_features — confluence_page_properties_report
+# ---------------------------------------------------------------------------
+
+def test_page_properties_report_basic(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "change-management",
+            "headings": ["Change ID", "Date", "Status"],
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert 'ac:name="detailssummary"' in result
+    assert '<ac:parameter ac:name="label">change-management</ac:parameter>' in result
+    assert "Change ID,Date,Status" in result
+
+
+def test_page_properties_report_headings_string(plugin):
+    """headings can also be supplied as a pre-joined string."""
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "ops",
+            "headings": "Owner,Risk,Status",
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert "Owner,Risk,Status" in result
+
+
+def test_page_properties_report_sort(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "ops",
+            "sort_by": "Date",
+            "reverse_sort": True,
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert '<ac:parameter ac:name="sortBy">Date</ac:parameter>' in result
+    assert '<ac:parameter ac:name="reverseSort">true</ac:parameter>' in result
+
+
+def test_page_properties_report_custom_space(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "change-management",
+            "space": "ENG",
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert '<ac:parameter ac:name="spaces">ENG</ac:parameter>' in result
+
+
+def test_page_properties_report_defaults_to_self_space(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "change-management",
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert '<ac:parameter ac:name="spaces">@self</ac:parameter>' in result
+
+
+def test_page_properties_report_cql_overrides_label(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "should-be-ignored",
+            "cql": 'label = "change-management" AND space = "ENG"',
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert '<ac:parameter ac:name="cql">' in result
+    assert "label = " in result
+    # When cql is set, the label param should not appear
+    assert '<ac:parameter ac:name="label">' not in result
+
+
+def test_page_properties_report_max(plugin):
+    meta = {
+        "confluence_page_properties_report": {
+            "label": "ops",
+            "max": 25,
+        }
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert '<ac:parameter ac:name="max">25</ac:parameter>' in result
+
+
+def test_page_properties_report_body_appended_after_macro(plugin):
+    body = "<p>Some intro text</p>"
+    meta = {"confluence_page_properties_report": {"label": "changes"}}
+    result = plugin._inject_page_meta_features(body, meta)
+    macro_pos = result.index("detailssummary")
+    body_pos = result.index("Some intro text")
+    assert macro_pos < body_pos
+
+
+def test_page_properties_report_combined_with_properties_and_toc(plugin):
+    """All three meta features can coexist on one page."""
+    meta = {
+        "confluence_properties": {"Owner": "Alice"},
+        "confluence_page_properties_report": {"label": "changes"},
+        "toc": True,
+    }
+    result = plugin._inject_page_meta_features("<p>Body</p>", meta)
+    assert 'ac:name="details"' in result
+    assert 'ac:name="detailssummary"' in result
+    assert 'ac:name="toc"' in result
+
+
 def test_on_config_missing_required_keys():
     plugin = ConfluencePlugin()
     plugin.config = {
