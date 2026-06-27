@@ -59,7 +59,15 @@ jobs:
       - name: Run Tests with Pytest and Generate Coverage
         run: |
           coverage run -m pytest --maxfail=1 --disable-warnings -q
-          coverage xml          
+          coverage xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Semantic Release PyPI
         uses: cycjimmy/semantic-release-action@v4
