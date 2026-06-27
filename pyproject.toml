@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mkdocs_confluence_plugin"
-version = "1.31.1"  # placeholder; semantic-release will update this
+version = "1.32.0"  # placeholder; semantic-release will update this
 description = "MkDocs plugin to export to Confluence"
 readme = "README.md"
 license = { text = "MIT" }
