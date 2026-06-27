@@ -59,6 +59,89 @@ def plugin_with_config():
     return p
 
 
+def test_preprocess_admonitions_note(plugin):
+    md = '!!! note "My Note"\n    This is the body.\n'
+    processed, placeholders = plugin._preprocess_admonitions(md)
+    assert len(placeholders) == 1
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="note"' in xml
+    assert '<ac:parameter ac:name="title">My Note</ac:parameter>' in xml
+    assert "This is the body." in xml
+
+
+def test_preprocess_admonitions_no_custom_title(plugin):
+    md = "!!! warning\n    Watch out!\n"
+    _, placeholders = plugin._preprocess_admonitions(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="warning"' in xml
+    assert '<ac:parameter ac:name="title">Warning</ac:parameter>' in xml
+
+
+def test_preprocess_admonitions_type_mapping(plugin):
+    for md_type, confluence_type in [
+        ("tip", "tip"),
+        ("hint", "tip"),
+        ("danger", "warning"),
+        ("error", "warning"),
+        ("info", "info"),
+        ("success", "tip"),
+    ]:
+        md = f"!!! {md_type}\n    Content.\n"
+        _, placeholders = plugin._preprocess_admonitions(md)
+        xml = next(iter(placeholders.values()))
+        assert f'ac:name="{confluence_type}"' in xml, f"{md_type} should map to {confluence_type}"
+
+
+def test_preprocess_admonitions_multiline_body(plugin):
+    md = '!!! note "Multi"\n    Line one.\n    Line two.\n    Line three.\n'
+    _, placeholders = plugin._preprocess_admonitions(md)
+    xml = next(iter(placeholders.values()))
+    assert "Line one." in xml
+    assert "Line two." in xml
+    assert "Line three." in xml
+
+
+def test_preprocess_admonitions_empty_title_string(plugin):
+    """An explicit empty title string should be used as-is (titleless macro)."""
+    md = '!!! note ""\n    Body.\n'
+    _, placeholders = plugin._preprocess_admonitions(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="note"' in xml
+    # Empty title is still present in parameter
+    assert '<ac:parameter ac:name="title"></ac:parameter>' in xml
+
+
+def test_preprocess_admonitions_multiple_blocks(plugin):
+    md = (
+        '!!! note "First"\n    Note body.\n\n'
+        '!!! tip "Second"\n    Tip body.\n'
+    )
+    _, placeholders = plugin._preprocess_admonitions(md)
+    assert len(placeholders) == 2
+    xmls = list(placeholders.values())
+    types = {x.split('ac:name="')[1].split('"')[0] for x in xmls}
+    assert types == {"note", "tip"}
+
+
+def test_preprocess_admonitions_non_admonition_passthrough(plugin):
+    md = "# Heading\n\nSome paragraph.\n"
+    processed, placeholders = plugin._preprocess_admonitions(md)
+    assert placeholders == {}
+    assert "# Heading" in processed
+    assert "Some paragraph." in processed
+
+
+def test_preprocess_admonitions_placeholder_replaced_in_render(plugin):
+    """End-to-end: admonition placeholder is replaced in the final rendered output."""
+    md = '!!! note "Check"\n    Important text.\n'
+    processed_md, admonition_map = plugin._preprocess_admonitions(md)
+    rendered = plugin.confluence_mistune(processed_md)
+    for placeholder, xml in admonition_map.items():
+        rendered = rendered.replace(placeholder, xml)
+    assert '<ac:structured-macro ac:name="note">' in rendered
+    assert "Important text." in rendered
+
+
 def test_plugin_instantiation():
     plugin = ConfluencePlugin()
     assert isinstance(plugin, ConfluencePlugin)
@@ -74,6 +157,214 @@ def test_normalize_title_key():
         plugin.normalize_title_key("   Special@#$%Characters   ")
         == "special-characters"
     )
+
+
+# ---------------------------------------------------------------------------
+# _preprocess_code_blocks
+# ---------------------------------------------------------------------------
+
+def test_code_block_python(plugin):
+    md = "```python\nprint('hello')\n```\n"
+    _, placeholders = plugin._preprocess_code_blocks(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="code"' in xml
+    assert '<ac:parameter ac:name="language">python</ac:parameter>' in xml
+    assert "print('hello')" in xml
+    assert "<![CDATA[" in xml
+
+
+def test_code_block_no_language(plugin):
+    md = "```\nplain text\n```\n"
+    _, placeholders = plugin._preprocess_code_blocks(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="code"' in xml
+    assert "language" not in xml  # no lang param when blank
+    assert "plain text" in xml
+
+
+def test_code_block_mermaid(plugin):
+    md = "```mermaid\ngraph TD\n  A-->B\n```\n"
+    _, placeholders = plugin._preprocess_code_blocks(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="mermaid"' in xml
+    assert "graph TD" in xml
+    assert "<![CDATA[" in xml
+
+
+def test_code_block_multiple(plugin):
+    md = "```python\ncode1\n```\n\n```bash\ncode2\n```\n"
+    _, placeholders = plugin._preprocess_code_blocks(md)
+    assert len(placeholders) == 2
+
+
+def test_code_block_cdata_escape(plugin):
+    """Embedded ]]> in code must be escaped so the CDATA section stays valid."""
+    md = "```\nsome ]]> content\n```\n"
+    _, placeholders = plugin._preprocess_code_blocks(md)
+    xml = next(iter(placeholders.values()))
+    assert "]]>" not in xml.split("<![CDATA[", 1)[-1].split("]]>")[0]
+
+
+# ---------------------------------------------------------------------------
+# _preprocess_admonitions — collapsible (???)
+# ---------------------------------------------------------------------------
+
+def test_collapsible_admonition_expand_macro(plugin):
+    md = '??? note "Details"\n    Hidden content.\n'
+    _, placeholders = plugin._preprocess_admonitions(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="expand"' in xml
+    assert "Details" in xml
+    assert "Hidden content." in xml
+
+
+def test_collapsible_admonition_plus(plugin):
+    md = '???+ tip "Open by default"\n    Visible.\n'
+    _, placeholders = plugin._preprocess_admonitions(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="expand"' in xml
+
+
+# ---------------------------------------------------------------------------
+# _preprocess_tabs
+# ---------------------------------------------------------------------------
+
+def test_tabs_become_expand_macros(plugin):
+    md = '=== "Tab A"\n    Content A.\n\n=== "Tab B"\n    Content B.\n'
+    _, placeholders = plugin._preprocess_tabs(md)
+    assert len(placeholders) == 2
+    xmls = list(placeholders.values())
+    titles = [x.split('<ac:parameter ac:name="title">')[1].split("</ac:parameter>")[0] for x in xmls]
+    assert "Tab A" in titles
+    assert "Tab B" in titles
+
+
+def test_tabs_content_rendered(plugin):
+    md = '=== "My Tab"\n    Hello world.\n'
+    _, placeholders = plugin._preprocess_tabs(md)
+    xml = next(iter(placeholders.values()))
+    assert 'ac:name="expand"' in xml
+    assert "Hello world." in xml
+
+
+# ---------------------------------------------------------------------------
+# _preprocess_task_lists
+# ---------------------------------------------------------------------------
+
+def test_task_list_checked(plugin):
+    md = "- [x] Done item\n"
+    result = plugin._preprocess_task_lists(md)
+    assert "✅" in result
+    assert "[x]" not in result
+
+
+def test_task_list_unchecked(plugin):
+    md = "- [ ] Todo item\n"
+    result = plugin._preprocess_task_lists(md)
+    assert "☐" in result
+    assert "[ ]" not in result
+
+
+def test_task_list_case_insensitive(plugin):
+    md = "- [X] Done item\n"
+    result = plugin._preprocess_task_lists(md)
+    assert "✅" in result
+
+
+def test_task_list_mixed(plugin):
+    md = "- [x] Done\n- [ ] Todo\n- [x] Also done\n"
+    result = plugin._preprocess_task_lists(md)
+    assert result.count("✅") == 2
+    assert result.count("☐") == 1
+
+
+# ---------------------------------------------------------------------------
+# _preprocess_definition_lists
+# ---------------------------------------------------------------------------
+
+def test_definition_list_basic(plugin):
+    md = "Apple\n:   A fruit\n"
+    _, placeholders = plugin._preprocess_definition_lists(md)
+    xml = next(iter(placeholders.values()))
+    assert "<dl>" in xml
+    assert "<dt>Apple</dt>" in xml
+    assert "<dd>A fruit</dd>" in xml
+
+
+def test_definition_list_multiple_terms(plugin):
+    md = "Cat\n:   A feline\n\nDog\n:   A canine\n"
+    _, placeholders = plugin._preprocess_definition_lists(md)
+    assert len(placeholders) >= 1
+    combined = " ".join(placeholders.values())
+    assert "Cat" in combined
+    assert "Dog" in combined
+
+
+# ---------------------------------------------------------------------------
+# _postprocess_heading_anchors
+# ---------------------------------------------------------------------------
+
+def test_heading_anchor_stripped_and_macro_injected(plugin):
+    html = "<h2>My Section {#my-anchor}</h2>"
+    result = plugin._postprocess_heading_anchors(html)
+    assert '<ac:structured-macro ac:name="anchor">' in result
+    assert '<ac:parameter ac:name="anchorName">my-anchor</ac:parameter>' in result
+    assert "My Section" in result
+    assert "{#my-anchor}" not in result
+
+
+def test_heading_anchor_h3(plugin):
+    html = "<h3>Sub heading {#sub-heading}</h3>"
+    result = plugin._postprocess_heading_anchors(html)
+    assert 'anchorName">sub-heading</ac:parameter>' in result
+    assert "<h3>Sub heading</h3>" in result
+
+
+def test_heading_anchor_no_anchor_passthrough(plugin):
+    html = "<h2>Normal heading</h2>"
+    result = plugin._postprocess_heading_anchors(html)
+    assert result == html
+
+
+# ---------------------------------------------------------------------------
+# _inject_page_meta_features
+# ---------------------------------------------------------------------------
+
+def test_inject_toc(plugin):
+    body = "<p>Content</p>"
+    meta = {"toc": True}
+    result = plugin._inject_page_meta_features(body, meta)
+    assert '<ac:structured-macro ac:name="toc">' in result
+    assert result.endswith("<p>Content</p>")
+
+
+def test_inject_page_properties(plugin):
+    body = "<p>Content</p>"
+    meta = {"confluence_properties": {"Owner": "Alice", "Status": "Draft"}}
+    result = plugin._inject_page_meta_features(body, meta)
+    assert '<ac:structured-macro ac:name="details">' in result
+    assert "<th>Owner</th><td>Alice</td>" in result
+    assert "<th>Status</th><td>Draft</td>" in result
+
+
+def test_inject_both_toc_and_properties(plugin):
+    body = "<p>Content</p>"
+    meta = {"toc": True, "confluence_properties": {"Owner": "Bob"}}
+    result = plugin._inject_page_meta_features(body, meta)
+    assert 'ac:name="details"' in result
+    assert 'ac:name="toc"' in result
+
+
+def test_inject_no_meta_passthrough(plugin):
+    body = "<p>Content</p>"
+    result = plugin._inject_page_meta_features(body, {})
+    assert result == body
+
+
+def test_inject_toc_false_no_macro(plugin):
+    body = "<p>Content</p>"
+    result = plugin._inject_page_meta_features(body, {"toc": False})
+    assert 'ac:name="toc"' not in result
 
 
 def test_on_config_missing_required_keys():

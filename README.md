@@ -1,25 +1,55 @@
 # MkDocs Confluence Plugin
 
-[![Python CI](https://img.shields.io/github/actions/workflow/status/polarpoint-io/python-mkdocs-to-confluence/python-app.yaml?branch=main&label=python%20ci)](https://github.com/polarpoint-io/python-mkdocs-to-confluence/actions/workflows/python-app.yaml)
-[![codecov](https://img.shields.io/codecov/c/github/polarpoint-io/python-mkdocs-to-confluence?branch=main&logo=codecov)](https://codecov.io/gh/polarpoint-io/python-mkdocs-to-confluence)
-[![PyPI version](https://img.shields.io/pypi/v/mkdocs_confluence_plugin.svg)](https://pypi.org/project/mkdocs_confluence_plugin/)
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="MkDocs → Confluence" width="100%"/>
+</p>
 
-A MkDocs plugin that automatically publishes your documentation to Confluence, with advanced navigation matching and semantic page resolution.
+<p align="center">
+  <a href="https://github.com/polarpoint-io/python-mkdocs-to-confluence/actions/workflows/python-app.yaml">
+    <img src="https://img.shields.io/github/actions/workflow/status/polarpoint-io/python-mkdocs-to-confluence/python-app.yaml?branch=main&label=CI&logo=github" alt="CI"/>
+  </a>
+  <a href="https://codecov.io/gh/polarpoint-io/python-mkdocs-to-confluence">
+    <img src="https://img.shields.io/codecov/c/github/polarpoint-io/python-mkdocs-to-confluence?branch=main&logo=codecov" alt="Coverage"/>
+  </a>
+  <a href="https://pypi.org/project/mkdocs_confluence_plugin/">
+    <img src="https://img.shields.io/pypi/v/mkdocs_confluence_plugin.svg?logo=pypi&logoColor=white" alt="PyPI"/>
+  </a>
+  <a href="https://pypi.org/project/mkdocs_confluence_plugin/">
+    <img src="https://img.shields.io/pypi/pyversions/mkdocs_confluence_plugin.svg?logo=python&logoColor=white" alt="Python versions"/>
+  </a>
+  <a href="https://github.com/polarpoint-io/python-mkdocs-to-confluence/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/polarpoint-io/python-mkdocs-to-confluence" alt="License"/>
+  </a>
+  <a href="https://github.com/polarpoint-io/python-mkdocs-to-confluence/stargazers">
+    <img src="https://img.shields.io/github/stars/polarpoint-io/python-mkdocs-to-confluence?style=flat" alt="Stars"/>
+  </a>
+</p>
+
+A MkDocs plugin that automatically publishes your documentation to Confluence — with rich Markdown rendering, smart navigation matching, and zero manual formatting.
 
 ## Features
 
-- **Automatic publishing** - Seamlessly export your MkDocs documentation to Confluence
-- **Navigation matching** - Matching between MkDocs navigation and documentation pages, including:
-  - Support for complex nested navigation structures
-  - Context-aware matching for pages in subdirectories
-  - Semantic matching with abbreviation expansion (e.g., "ADRs" → "Architecture Design Records")
-  - Fuzzy matching as fallback for edge cases
-  - YAML front matter title recognition
-- **Flexible configuration** - Extensive configuration options for Confluence integration
-- **Dry-run mode** - Test your configuration without publishing
-- **Debug mode** - Detailed logging for troubleshooting
-- **Footer support** - Optional GitHub edit links and auto-generation notices
-- **Folder structure preservation** - Maintains your documentation hierarchy in Confluence
+### Markdown rendering
+- **Admonitions** (`!!!`) — rendered as native Confluence info/note/tip/warning macros
+- **Collapsible sections** (`???`) — rendered as Confluence expand macros
+- **Fenced code blocks** — rendered as Confluence code macros with syntax highlighting; `mermaid` blocks use the Mermaid macro
+- **Tabbed content** (`=== "Tab"`) — each tab becomes a Confluence expand panel
+- **Task lists** (`- [x]` / `- [ ]`) — converted to ✅ / ☐ checkboxes
+- **Definition lists** — rendered as `<dl>/<dt>/<dd>` (Confluence-native)
+- **Heading anchors** (`{#id}`) — inject Confluence anchor macros for deep-linking
+- **Table of Contents** (`toc: true` frontmatter) — Confluence TOC macro prepended to page
+- **Page Properties** (`confluence_properties:` frontmatter) — Confluence Details macro for Page Properties Reports
+
+### Navigation & publishing
+- **Automatic publishing** — export your full MkDocs site to Confluence on every build
+- **Folder structure preservation** — maintains your documentation hierarchy as Confluence page trees
+- **Smart navigation matching** — semantic, context-aware, and fuzzy matching between MkDocs nav and Confluence pages
+  - Abbreviation expansion (`ADRs` → `Architecture Design Records`)
+  - Context-aware matching for nested directories
+  - Fuzzy fallback for edge cases
+- **Flexible configuration** — per-page labels, headers, footers, edit links
+- **Dry-run mode** — verify what would be published without touching Confluence
+- **Debug mode** — detailed logging for troubleshooting
 
 ## Installation
 
@@ -128,16 +158,38 @@ plugins:
 |--------|-------------|---------|----------|
 | `host_url` | Confluence API endpoint URL | | ✅ |
 | `space` | Confluence space key | | ✅ |
-| `parent_page_name` | Parent page name in Confluence | | ✅ |
-| `git_base_url` | Base URL for Git Server edit links | | |
-| `enable_header` | Add header with edit links | `false` | |
-| `enable_footer` | Add footer with edit links | `false` | |
-| `header_text` | Custom header text (`{edit_link}` placeholder) | `"Auto-updated - {edit_link}"` | |
-| `footer_text` | Custom footer text (`{edit_link}` placeholder) | `"Auto-updated - {edit_link}"` | |
-| `enabled_if_env` | Environment variable to enable plugin | | |
-| `dryrun` | Test mode without publishing | `false` | |
+| `parent_page_name` | Parent page name in Confluence (supports `/`-separated paths) | | ✅ |
+| `git_base_url` | Base URL for Git edit links in header/footer | | |
+| `enable_header` | Add header with edit link | `false` | |
+| `enable_footer` | Add footer with edit link | `false` | |
+| `header_text` | Header text (`{edit_link}` placeholder supported) | `"Auto-updated - {edit_link}"` | |
+| `footer_text` | Footer text (`{edit_link}` placeholder supported) | `"Auto-updated - {edit_link}"` | |
+| `enabled_if_env` | Only publish when this env var equals `1` | | |
+| `dryrun` | Log all actions but make no changes to Confluence | `false` | |
 | `debug` | Enable debug logging | `false` | |
 | `verbose` | Enable verbose output | `false` | |
+| `default_labels` | Labels applied to every published page | `["pe","mkdocs"]` | |
+
+### Per-page frontmatter
+
+Control Confluence-specific features per page via YAML frontmatter:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `toc` | `bool` | Prepend a Confluence Table of Contents macro |
+| `confluence_properties` | `dict` | Key/value pairs published as a Page Properties macro |
+| `labels` / `tags` | `list` | Additional labels applied to this page only |
+
+```yaml
+---
+title: My Page
+toc: true
+confluence_properties:
+  Owner: Alice
+  Status: Approved
+labels: [runbook, critical]
+---
+```
 
 ## Usage
 

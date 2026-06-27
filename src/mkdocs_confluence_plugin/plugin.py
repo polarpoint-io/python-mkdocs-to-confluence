@@ -28,6 +28,38 @@ from difflib import get_close_matches
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run."
 
+# Maps MkDocs admonition types to Confluence structured macro names
+ADMONITION_TYPE_MAP = {
+    "note": "note",
+    "seealso": "note",
+    "abstract": "info",
+    "summary": "info",
+    "tldr": "info",
+    "info": "info",
+    "todo": "info",
+    "tip": "tip",
+    "hint": "tip",
+    "important": "tip",
+    "success": "tip",
+    "check": "tip",
+    "done": "tip",
+    "question": "info",
+    "help": "info",
+    "faq": "info",
+    "warning": "warning",
+    "caution": "warning",
+    "attention": "warning",
+    "failure": "warning",
+    "fail": "warning",
+    "missing": "warning",
+    "danger": "warning",
+    "error": "warning",
+    "bug": "warning",
+    "example": "info",
+    "quote": "info",
+    "cite": "info",
+}
+
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 formatter = logging.Formatter("mk2conflu [%(levelname)8s] : %(message)s")
@@ -90,6 +122,336 @@ class ConfluencePlugin(BasePlugin):
         self.auth_configured = False
         # Store attachments for deferred processing after all plugins have run
         self.deferred_attachments = []
+
+    # ------------------------------------------------------------------
+    # Markdown → Confluence pre/post-processors
+    # ------------------------------------------------------------------
+
+    def _collect_indented_block(self, lines: list, start: int):
+        """
+        Collect lines indented by 4 spaces or a tab starting at *start*.
+        Returns (content_lines, next_index).
+        """
+        content_lines = []
+        i = start
+        while i < len(lines):
+            cl = lines[i]
+            if not cl.strip():
+                if i + 1 < len(lines) and (
+                    lines[i + 1].startswith("    ") or lines[i + 1].startswith("\t")
+                ):
+                    content_lines.append("")
+                    i += 1
+                else:
+                    i += 1
+                    break
+            elif cl.startswith("    "):
+                content_lines.append(cl[4:])
+                i += 1
+            elif cl.startswith("\t"):
+                content_lines.append(cl[1:])
+                i += 1
+            else:
+                break
+        return content_lines, i
+
+    def _preprocess_code_blocks(self, markdown: str):
+        """
+        Convert fenced code blocks (``` or ~~~) to Confluence ``code`` or
+        ``mermaid`` structured macros before the main mistune pass.
+
+        Returns ``(processed_markdown, {placeholder_para: confluence_xml})``.
+        """
+        fenced_re = re.compile(
+            r"^(?P<fence>`{3,}|~{3,})(?P<lang>[^\n`~]*)?\n(?P<code>.*?)^(?P=fence)[ \t]*$",
+            re.MULTILINE | re.DOTALL,
+        )
+        placeholder_map = {}
+        counter = [0]
+
+        def _replace(m):
+            lang = (m.group("lang") or "").strip()
+            code = m.group("code")
+            # Escape CDATA end sequence
+            code_safe = code.replace("]]>", "]]]]><![CDATA[>")
+
+            if lang.lower() == "mermaid":
+                xml = (
+                    '<ac:structured-macro ac:name="mermaid">'
+                    f"<ac:plain-text-body><![CDATA[{code_safe}]]></ac:plain-text-body>"
+                    "</ac:structured-macro>"
+                )
+            else:
+                lang_param = (
+                    f'<ac:parameter ac:name="language">{lang}</ac:parameter>' if lang else ""
+                )
+                xml = (
+                    '<ac:structured-macro ac:name="code">'
+                    f"{lang_param}"
+                    '<ac:parameter ac:name="linenumbers">false</ac:parameter>'
+                    f"<ac:plain-text-body><![CDATA[{code_safe}]]></ac:plain-text-body>"
+                    "</ac:structured-macro>"
+                )
+
+            placeholder = f"CONFLUENCE_CODE_{counter[0]}"
+            placeholder_map[f"<p>{placeholder}</p>"] = xml
+            counter[0] += 1
+            return f"\n{placeholder}\n"
+
+        processed = fenced_re.sub(_replace, markdown)
+        return processed, placeholder_map
+
+    def _preprocess_admonitions(self, markdown: str):
+        """
+        Convert MkDocs admonition (``!!!``) and collapsible (``???`` / ``???+``)
+        blocks to Confluence structured macros.
+
+        - ``!!!`` → ``info`` / ``note`` / ``tip`` / ``warning`` macro
+        - ``???`` / ``???+`` → ``expand`` macro (collapsed by default in Confluence)
+
+        Returns ``(processed_markdown, {placeholder_para: confluence_xml})``.
+        """
+        # Matches both !!! (admonition) and ???[+] (collapsible)
+        _admonition_re = re.compile(
+            r"^[ \t]*(?P<marker>!!!|\?\?\?\+?)[ \t]+"
+            r"(?P<type>\w+)[ \t]*(?:\"(?P<title>[^\"]*)\")?[ \t]*$"
+        )
+
+        lines = markdown.split("\n")
+        result_lines = []
+        placeholder_map = {}
+        counter = 0
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            m = _admonition_re.match(line)
+            if m:
+                marker = m.group("marker")
+                admonition_type = m.group("type").lower()
+                custom_title = m.group("title")
+                title = custom_title if custom_title is not None else admonition_type.capitalize()
+
+                content_lines, i = self._collect_indented_block(lines, i + 1)
+                content_md = "\n".join(content_lines)
+                content_html = self.confluence_mistune(content_md)
+
+                if marker.startswith("?"):
+                    # Collapsible → Confluence expand macro
+                    xml = (
+                        '<ac:structured-macro ac:name="expand">'
+                        f'<ac:parameter ac:name="title">{title}</ac:parameter>'
+                        f"<ac:rich-text-body>{content_html}</ac:rich-text-body>"
+                        "</ac:structured-macro>"
+                    )
+                else:
+                    confluence_type = ADMONITION_TYPE_MAP.get(admonition_type, "info")
+                    xml = (
+                        f'<ac:structured-macro ac:name="{confluence_type}">'
+                        f'<ac:parameter ac:name="title">{title}</ac:parameter>'
+                        f"<ac:rich-text-body>{content_html}</ac:rich-text-body>"
+                        "</ac:structured-macro>"
+                    )
+
+                placeholder = f"CONFLUENCE_ADMONITION_{counter}"
+                placeholder_map[f"<p>{placeholder}</p>"] = xml
+                counter += 1
+                result_lines.append("")
+                result_lines.append(placeholder)
+                result_lines.append("")
+            else:
+                result_lines.append(line)
+                i += 1
+
+        return "\n".join(result_lines), placeholder_map
+
+    def _preprocess_tabs(self, markdown: str):
+        """
+        Convert MkDocs Material tabbed content (``=== "Label"``) to Confluence
+        ``expand`` macros, one per tab.
+
+        Returns ``(processed_markdown, {placeholder_para: confluence_xml})``.
+        """
+        _tab_re = re.compile(r'^===[ \t]+"(?P<label>[^"]+)"[ \t]*$')
+
+        lines = markdown.split("\n")
+        result_lines = []
+        placeholder_map = {}
+        counter = 0
+        i = 0
+
+        while i < len(lines):
+            line = lines[i]
+            m = _tab_re.match(line)
+            if m:
+                label = m.group("label")
+                content_lines, i = self._collect_indented_block(lines, i + 1)
+                content_md = "\n".join(content_lines)
+                content_html = self.confluence_mistune(content_md)
+
+                xml = (
+                    '<ac:structured-macro ac:name="expand">'
+                    f'<ac:parameter ac:name="title">{label}</ac:parameter>'
+                    f"<ac:rich-text-body>{content_html}</ac:rich-text-body>"
+                    "</ac:structured-macro>"
+                )
+
+                placeholder = f"CONFLUENCE_TAB_{counter}"
+                placeholder_map[f"<p>{placeholder}</p>"] = xml
+                counter += 1
+                result_lines.append("")
+                result_lines.append(placeholder)
+                result_lines.append("")
+            else:
+                result_lines.append(line)
+                i += 1
+
+        return "\n".join(result_lines), placeholder_map
+
+    def _preprocess_task_lists(self, markdown: str) -> str:
+        """
+        Convert GitHub-style task list items to Unicode checkboxes.
+
+        ``- [x] Done``  →  ``- ✅ Done``
+        ``- [ ] Todo``  →  ``- ☐ Todo``
+        """
+        markdown = re.sub(r"^([ \t]*[-*+][ \t]+)\[x\]", r"\1✅", markdown, flags=re.MULTILINE | re.IGNORECASE)
+        markdown = re.sub(r"^([ \t]*[-*+][ \t]+)\[ \]", r"\1☐", markdown, flags=re.MULTILINE)
+        return markdown
+
+    def _preprocess_definition_lists(self, markdown: str):
+        """
+        Convert Markdown definition lists to ``<dl>/<dt>/<dd>`` HTML that
+        Confluence storage format supports.
+
+        Format::
+
+            Term
+            :   Definition
+
+        Returns ``(processed_markdown, {placeholder_para: confluence_xml})``.
+        """
+        # A definition list block: one or more non-blank lines (terms) followed
+        # by one or more `:   definition` lines.
+        _deflist_block_re = re.compile(
+            r"(?m)(?P<block>(?:^(?![ \t]*:[ \t])[ \t]*\S[^\n]*\n)"
+            r"(?:^[ \t]*:[ \t]+[^\n]*\n?)+)"
+        )
+
+        placeholder_map = {}
+        counter = [0]
+
+        def _replace(m):
+            block = m.group("block")
+            block_lines = block.splitlines()
+            dl_parts = ["<dl>"]
+            current_terms = []
+            for bline in block_lines:
+                def_m = re.match(r"^[ \t]*:[ \t]+(?P<def>.+)$", bline)
+                if def_m:
+                    for term in current_terms:
+                        dl_parts.append(f"<dt>{term.strip()}</dt>")
+                    current_terms = []
+                    dl_parts.append(f"<dd>{def_m.group('def').strip()}</dd>")
+                else:
+                    current_terms.append(bline.strip())
+            dl_parts.append("</dl>")
+            xml = "".join(dl_parts)
+
+            placeholder = f"CONFLUENCE_DEFLIST_{counter[0]}"
+            placeholder_map[f"<p>{placeholder}</p>"] = xml
+            counter[0] += 1
+            return f"\n{placeholder}\n\n"
+
+        processed = _deflist_block_re.sub(_replace, markdown)
+        return processed, placeholder_map
+
+    def _postprocess_heading_anchors(self, html: str) -> str:
+        """
+        Strip ``{#anchor-id}`` suffixes from heading text and inject a
+        Confluence anchor macro immediately before the heading tag.
+
+        Example::
+
+            ## My Section {#my-section}
+
+        Becomes::
+
+            <ac:structured-macro ac:name="anchor">
+              <ac:parameter ac:name="anchorName">my-section</ac:parameter>
+            </ac:structured-macro>
+            <h2>My Section</h2>
+        """
+        _heading_re = re.compile(
+            r"(<h[1-6][^>]*>)(.*?)\s*\{#(?P<anchor>[^}]+)\}(</h[1-6]>)",
+            re.IGNORECASE,
+        )
+
+        def _replace(m):
+            open_tag = m.group(1)
+            text = m.group(2)
+            anchor = m.group("anchor").strip()
+            close_tag = m.group(4)
+            anchor_macro = (
+                '<ac:structured-macro ac:name="anchor">'
+                f'<ac:parameter ac:name="anchorName">{anchor}</ac:parameter>'
+                "</ac:structured-macro>"
+            )
+            return f"{anchor_macro}{open_tag}{text}{close_tag}"
+
+        return _heading_re.sub(_replace, html)
+
+    def _inject_page_meta_features(self, body: str, meta: dict) -> str:
+        """
+        Inject Confluence macros driven by MkDocs page frontmatter.
+
+        ``toc: true``
+            Prepends a Table of Contents macro (h2–h4).
+
+        ``confluence_properties:``
+            Wraps a ``<table>`` of key/value pairs in the Confluence
+            ``details`` (Page Properties) macro, prepended to the body.
+            Useful for Page Properties Reports.
+
+        Example frontmatter::
+
+            ---
+            toc: true
+            confluence_properties:
+              Owner: Alice
+              Status: In Review
+            ---
+        """
+        if not meta:
+            return body
+
+        prefix = ""
+
+        # Page Properties macro
+        props = meta.get("confluence_properties") or {}
+        if props and isinstance(props, dict):
+            rows = "".join(
+                f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in props.items()
+            )
+            prefix += (
+                '<ac:structured-macro ac:name="details">'
+                "<ac:rich-text-body>"
+                f"<table><tbody>{rows}</tbody></table>"
+                "</ac:rich-text-body>"
+                "</ac:structured-macro>"
+            )
+
+        # Table of Contents macro
+        if meta.get("toc"):
+            prefix += (
+                '<ac:structured-macro ac:name="toc">'
+                '<ac:parameter ac:name="minLevel">2</ac:parameter>'
+                '<ac:parameter ac:name="maxLevel">4</ac:parameter>'
+                '<ac:parameter ac:name="printable">true</ac:parameter>'
+                "</ac:structured-macro>"
+            )
+
+        return prefix + body
 
     def normalize_title_key(self, title: str) -> str:
         return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -453,7 +815,30 @@ class ConfluencePlugin(BasePlugin):
         """Capture page content before it's rendered and store by normalized title."""
         abs_src_path = page.file.abs_src_path
         title_key = self.normalize_title_key(page.title)
-        rendered = self.confluence_mistune(markdown)
+
+        # --- Pre-processing pipeline (order matters) ---
+        # 1. Fenced code blocks first so later steps don't see raw ``` fences
+        processed_md, code_map = self._preprocess_code_blocks(markdown)
+        # 2. Admonitions (!!!) and collapsible (???) blocks
+        processed_md, admonition_map = self._preprocess_admonitions(processed_md)
+        # 3. MkDocs Material tabbed content
+        processed_md, tabs_map = self._preprocess_tabs(processed_md)
+        # 4. Definition lists
+        processed_md, deflist_map = self._preprocess_definition_lists(processed_md)
+        # 5. Task lists (simple in-place substitution, no placeholders needed)
+        processed_md = self._preprocess_task_lists(processed_md)
+
+        # --- Main mistune render ---
+        rendered = self.confluence_mistune(processed_md)
+
+        # --- Swap all placeholders back for Confluence XML ---
+        all_placeholders = {**code_map, **admonition_map, **tabs_map, **deflist_map}
+        for placeholder, xml in all_placeholders.items():
+            rendered = rendered.replace(placeholder, xml)
+
+        # --- Post-processing ---
+        rendered = self._postprocess_heading_anchors(rendered)
+        rendered = self._inject_page_meta_features(rendered, page.meta)
 
         page_info = {
             "title": page.title,
