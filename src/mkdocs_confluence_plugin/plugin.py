@@ -627,6 +627,29 @@ class ConfluencePlugin(BasePlugin):
         if not self.enabled:
             return config
 
+        self.default_labels = plugin_cfg.get("default_labels", ["cpe", "mkdocs"])
+        self.dryrun = plugin_cfg.get("dryrun", False)
+
+        if plugin_cfg.get("debug", False):
+            log.setLevel(logging.DEBUG)
+
+        # Check enabled_if_env BEFORE requiring credentials — no need to
+        # validate or connect when the plugin is disabled.
+        enabled_if_env = plugin_cfg.get("enabled_if_env")
+        if enabled_if_env:
+            self.enabled = os.environ.get(enabled_if_env) == "1"
+            if not self.enabled:
+                log.warning(
+                    f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable."
+                )
+                return config
+            else:
+                log.info(
+                    f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1)."
+                )
+        else:
+            log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
+
         if not plugin_cfg.get("username"):
             plugin_cfg["username"] = os.environ.get("CONFLUENCE_USERNAME")
         if not plugin_cfg.get("password"):
@@ -646,27 +669,6 @@ class ConfluencePlugin(BasePlugin):
         # Configure session for attachment uploads
         self.session.auth = (plugin_cfg["username"], plugin_cfg["password"])
         self.auth_configured = True
-
-        self.default_labels = plugin_cfg.get("default_labels", ["cpe", "mkdocs"])
-        self.dryrun = plugin_cfg.get("dryrun", False)
-
-        if plugin_cfg.get("debug", False):
-            log.setLevel(logging.DEBUG)
-
-        enabled_if_env = plugin_cfg.get("enabled_if_env")
-        if enabled_if_env:
-            self.enabled = os.environ.get(enabled_if_env) == "1"
-            if not self.enabled:
-                log.warning(
-                    f"Exporting MKDOCS pages to Confluence turned OFF: set env var {enabled_if_env}=1 to enable."
-                )
-                return config
-            else:
-                log.info(
-                    f"Exporting MKDOCS pages to Confluence turned ON (env var {enabled_if_env}=1)."
-                )
-        else:
-            log.info("Exporting MKDOCS pages to Confluence turned ON by default!")
 
         if self.dryrun:
             log.warning("DRYRUN MODE ENABLED: No changes will be made to Confluence.")
