@@ -287,6 +287,92 @@ Standard Markdown tables pass through mistune and render correctly in Confluence
 | TOC | `toc: true` frontmatter | `toc` |
 | Page Properties | `confluence_properties:` | `details` |
 | Properties Report | `confluence_page_properties_report:` | `detailssummary` |
+| Per-page space override | `confluence_space:` | Redirect to custom space |
+| Per-page parent override | `confluence_parent_page:` | Redirect to custom parent |
+| Auto-delete on removal | `confluence_delete_on_removal:` | Deletion tracking |
+
+---
+
+## Per-Page Space & Parent Overrides {#per-page-overrides}
+
+Override the global Confluence space or parent page for individual pages using frontmatter.
+Useful for archiving docs, publishing to different spaces, or special page hierarchies.
+
+```yaml
+---
+title: "Archived Documentation"
+confluence_space: "ARCHIVE"
+confluence_parent_page: "Legacy Docs"
+---
+```
+
+This page will be published to the `ARCHIVE` space under the "Legacy Docs" parent page,
+regardless of global configuration.
+
+---
+
+## Page Registry & Deletion Tracking {#deletion-tracking}
+
+The plugin maintains a `.confluence-registry.yml` file tracking all published pages.
+When pages are removed from the markdown repo, the plugin can automatically delete them
+from Confluence using configurable modes.
+
+**Mark a page for automatic deletion:**
+
+```yaml
+---
+title: "Page to Remove"
+confluence_delete_on_removal: true
+---
+
+This page will be deleted from Confluence when removed from the markdown repo.
+```
+
+**Configuration (mkdocs-confluence.yml):**
+
+```yaml
+confluence:
+  deletion_mode: "conservative"     # conservative | semi-automatic | automatic
+  auto_delete_after_builds: 2       # for semi-automatic mode
+  require_confirmation: true        # safety check for automatic
+```
+
+**Deletion modes:**
+- **conservative:** Only delete pages explicitly marked with `confluence_delete_on_removal: true`
+- **semi-automatic:** Delete after N consecutive missing builds (safer than immediate)
+- **automatic:** Delete immediately (with confirmation safeguard)
+
+---
+
+## Folders Support {#folders}
+
+Auto-map your markdown directory structure to Confluence folders. Keeps large doc sets organized.
+
+**Enable in configuration (mkdocs-confluence.yml):**
+
+```yaml
+confluence:
+  use_folders: true
+  folder_root: "Markdown Docs"
+```
+
+**Example structure:**
+
+```
+docs/
+  technical-practices/
+    documentation/
+      confluence-rendering-showcase.md  → Confluence Docs / Markdown Docs / technical-practices / documentation
+    ci-cd/
+      deployment.md                     → Confluence Docs / Markdown Docs / technical-practices / ci-cd
+  architecture/
+    adr/
+      001-event-sourcing.md             → Confluence Docs / Markdown Docs / architecture / adr
+```
+
+Each directory level becomes a folder in Confluence, and pages are placed inside their
+corresponding folder. This preserves your documentation's logical structure while leveraging
+Confluence's native folder organization.
 
 ---
 
