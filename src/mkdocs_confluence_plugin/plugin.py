@@ -11,6 +11,7 @@ import shutil
 import mistune
 import contextlib
 import logging
+import yaml
 from urllib.parse import quote
 from pathlib import Path
 import string
@@ -24,6 +25,7 @@ from atlassian import Confluence
 from urllib.parse import quote_plus
 from typing import Optional
 from difflib import get_close_matches
+from datetime import datetime
 
 TEMPLATE_BODY = "<p> TEMPLATE </p>"
 MKDOCS_FOOTER = "This page is auto-generated and will be overwritten at the next run."
@@ -104,6 +106,15 @@ class ConfluencePlugin(BasePlugin):
         ("header_text", config_options.Type(str, default="Auto-updated - {edit_link}")),
         ("footer_text", config_options.Type(str, default="Auto-updated - {edit_link}")),
         ("default_labels", config_options.Type(list, default=["pe", "mkdocs"])),
+        # Feature 1: Per-page overrides & Feature 2: Deletion tracking
+        ("deletion_mode", config_options.Type(str, default="conservative")),
+        ("auto_delete_after_builds", config_options.Type(int, default=2)),
+        ("require_confirmation", config_options.Type(bool, default=True)),
+        ("registry_file", config_options.Type(str, default=".confluence-registry.yml")),
+        # Feature 3: Folders support
+        ("use_folders", config_options.Type(bool, default=False)),
+        ("folder_root", config_options.Type(str, default="Markdown Docs")),
+        ("auto_delete_empty_folders", config_options.Type(bool, default=True)),
     )
 
     def __init__(self):
@@ -122,6 +133,16 @@ class ConfluencePlugin(BasePlugin):
         self.auth_configured = False
         # Store attachments for deferred processing after all plugins have run
         self.deferred_attachments = []
+        # Feature 1: Per-page overrides tracking
+        self.space = None
+        self.parent_page_name = None
+        # Feature 2: Page registry for deletion tracking
+        self.published_pages = []
+        self.registry_file = Path(".confluence-registry.yml")
+        self.deletion_log_file = Path(".confluence-deletions.yml")
+        self.deletion_audit_file = Path(".confluence-deletion-audit.log")
+        # Feature 3: Folders support
+        self._folder_cache = {}
 
     # ------------------------------------------------------------------
     # Markdown → Confluence pre/post-processors
@@ -621,6 +642,7 @@ class ConfluencePlugin(BasePlugin):
     def on_config(self, config):
         plugin_cfg = self.config
         self.space = self.config.get("space")
+        self.parent_page_name = self.config.get("parent_page_name")  # Feature 1: store for per-page overrides
         self.enabled = plugin_cfg.get("enabled", True)
         self.only_in_nav = plugin_cfg.get("only_in_nav", False)
 
@@ -1106,6 +1128,10 @@ class ConfluencePlugin(BasePlugin):
         else:
             log.debug("No deferred attachments to process")
 
+        # FEATURE 2: Save registry and handle deletions
+        self._save_registry()
+        self._handle_page_deletions()
+
     def get_page_url(self, title, parent_id=None):
         cache_key = self._cache_key(title, parent_id)
         page_id = self.page_ids.get(cache_key)
@@ -1209,7 +1235,6 @@ class ConfluencePlugin(BasePlugin):
             return None
 
         key = self.normalize_title_key(title)
-        page_exists, existing_id = self.page_exists(title, parent_id)
 
         # Get page info to check for footer and metadata
         page_info = None
@@ -1223,15 +1248,28 @@ class ConfluencePlugin(BasePlugin):
                     page_info = info
                     break
 
+        # Extract metadata for labels
+        page_meta = page_info.get("meta", {}) if page_info else {}
+
+        # FEATURE 1: Per-page overrides for space and parent_page
+        target_space = page_meta.get("confluence_space") or self.space
+        target_parent_name = page_meta.get("confluence_parent_page") or self.parent_page_name
+        target_parent_id = parent_id
+
+        # If per-page parent override is specified, resolve it to an ID
+        if target_parent_name and target_parent_name != self.parent_page_name:
+            target_parent_id = self.find_page_id(target_parent_name)
+            if target_parent_id:
+                log.debug(f"Using per-page parent override: {target_parent_name} (ID: {target_parent_id})")
+
+        page_exists, existing_id = self.page_exists(title, target_parent_id)
+
         # Add header and footer to body if they exist
         final_body = body
         if page_info and not is_folder:
             header = page_info.get("header", "")
             footer = page_info.get("footer", "")
             final_body = header + body + footer
-
-        # Extract metadata for labels
-        page_meta = page_info.get("meta", {}) if page_info else {}
 
         if page_exists:
             page_id = existing_id
@@ -1241,21 +1279,41 @@ class ConfluencePlugin(BasePlugin):
                 # Apply labels to updated page (including page metadata labels)
                 if not is_folder:
                     self.apply_labels_to_page(page_id, page_meta=page_meta)
+                # FEATURE 2: Register updated page for deletion tracking
+                if not is_folder:
+                    self._register_page(
+                        page_id=page_id,
+                        src_path=abs_src_path,
+                        title=title,
+                        space=target_space,
+                        content_hash=hash(final_body),
+                        delete_on_removal=page_meta.get("confluence_delete_on_removal", False),
+                    )
             else:
-                self.dryrun_log("update", title, parent_id)
+                self.dryrun_log("update", title, target_parent_id)
         else:
             log.info(f"🆕 Page does not exist: '{title}' — creating.")
             if not self.dryrun:
                 created = self.confluence.create_page(
-                    self.space, title, final_body, parent_id
+                    target_space, title, final_body, target_parent_id
                 )
                 page_id = created.get("id")
                 # Apply labels to newly created page (including page metadata labels)
                 if page_id and not is_folder:
                     self.apply_labels_to_page(page_id, page_meta=page_meta)
+                # FEATURE 2: Register page for deletion tracking
+                if page_id and not is_folder:
+                    self._register_page(
+                        page_id=page_id,
+                        src_path=abs_src_path,
+                        title=title,
+                        space=target_space,
+                        content_hash=hash(final_body),
+                        delete_on_removal=page_meta.get("confluence_delete_on_removal", False),
+                    )
             else:
                 page_id = f"DRYRUN-{title}"
-                self.dryrun_log("create", title, parent_id)
+                self.dryrun_log("create", title, target_parent_id)
 
         # Attachments handling - defer processing until after all plugins have run
         if abs_src_path:
@@ -2110,10 +2168,17 @@ class ConfluencePlugin(BasePlugin):
                     self.attachments.get(abs_src_path, []) if abs_src_path else []
                 )
 
+                # FEATURE 3: Determine target parent (folder or page)
+                target_parent_for_page = parent_id
+                if self.config.get("use_folders") and abs_src_path:
+                    folder_id = self._map_file_to_folder(abs_src_path)
+                    if folder_id:
+                        target_parent_for_page = folder_id
+
                 page_id = self.create_or_update_page(
                     title=page_info.get("title", node),
                     body=body,
-                    parent_id=parent_id,
+                    parent_id=target_parent_for_page,
                     attachments=attachments,
                     abs_src_path=abs_src_path,
                 )
@@ -2208,3 +2273,240 @@ class ConfluencePlugin(BasePlugin):
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_sha1.update(chunk)
         return hash_sha1.hexdigest()
+
+    # -------FEATURE 2: Page Registry & Deletion Tracking -------
+
+    def _register_page(self, page_id, src_path, title, space, content_hash, delete_on_removal=False):
+        """Register a published page for deletion tracking."""
+        self.published_pages.append({
+            "id": page_id,
+            "title": title,
+            "src_path": src_path,
+            "space": space,
+            "hash": content_hash,
+            "delete_on_removal": delete_on_removal,
+            "published_at": datetime.utcnow().isoformat() + "Z",
+        })
+        log.debug(f"Registered page for tracking: {title} (ID: {page_id})")
+
+    def _load_registry(self):
+        """Load previous page registry."""
+        registry_path = Path(self.config.get("registry_file", ".confluence-registry.yml"))
+        if not registry_path.exists():
+            return {"version": "1", "published_pages": [], "space": self.space}
+
+        try:
+            with open(registry_path) as f:
+                return yaml.safe_load(f) or {"version": "1", "published_pages": []}
+        except Exception as e:
+            log.warning(f"Failed to load registry: {e}")
+            return {"version": "1", "published_pages": []}
+
+    def _save_registry(self):
+        """Save updated page registry to file."""
+        registry_path = Path(self.config.get("registry_file", ".confluence-registry.yml"))
+        registry = {
+            "version": "1",
+            "space": self.space,
+            "last_sync": datetime.utcnow().isoformat() + "Z",
+            "published_pages": self.published_pages,
+        }
+
+        try:
+            with open(registry_path, "w") as f:
+                yaml.dump(registry, f, default_flow_style=False, sort_keys=False)
+            log.info(f"Saved registry: {len(self.published_pages)} pages tracked")
+        except Exception as e:
+            log.error(f"Failed to save registry: {e}")
+
+    # -------FEATURE 3: Confluence Folders Support -------
+
+    def _ensure_folder_exists(self, folder_name, parent_folder_id=None):
+        """Create a folder if it doesn't exist, return folder ID."""
+        try:
+            # Search for existing folder
+            query = f"title ~ '{folder_name}'"
+            result = self.confluence.cql(query, limit=5)
+
+            for page in result.get("results", []):
+                # Check if this is the right folder with the right parent
+                if page.get("title") == folder_name:
+                    if parent_folder_id is None or page.get("parentId") == parent_folder_id:
+                        log.debug(f"Found existing folder: {folder_name}")
+                        return page.get("id")
+
+            # Create new folder if not found
+            log.info(f"Creating folder: {folder_name}")
+            folder_payload = {
+                "space": self.space,
+                "title": folder_name,
+                "body": "",
+                "type": "page",
+            }
+
+            if parent_folder_id:
+                folder_payload["parentId"] = parent_folder_id
+
+            folder = self.confluence.create_page(**folder_payload)
+            return folder.get("id")
+        except Exception as e:
+            log.error(f"Error ensuring folder exists: {e}")
+            return None
+
+    def _map_file_to_folder(self, src_path):
+        """Map a markdown file path to its folder ID."""
+        if not self.config.get("use_folders"):
+            return None
+
+        try:
+            # Extract directory from path: docs/technical-practices/documentation/file.md
+            # -> ['technical-practices', 'documentation']
+            path_obj = Path(src_path) if isinstance(src_path, str) else Path(str(src_path))
+            path_parts = path_obj.parent.parts
+
+            # Skip 'docs' if it's first
+            if path_parts and path_parts[0] == "docs":
+                path_parts = path_parts[1:]
+
+            if not path_parts:
+                return None
+
+            # Traverse/create folder hierarchy
+            current_parent = None
+
+            for part in path_parts:
+                cache_key = f"{current_parent}:{part}"
+
+                if cache_key not in self._folder_cache:
+                    self._folder_cache[cache_key] = self._ensure_folder_exists(part, current_parent)
+
+                current_parent = self._folder_cache[cache_key]
+
+            log.debug(f"Mapped {src_path} to folder ID: {current_parent}")
+            return current_parent
+        except Exception as e:
+            log.error(f"Error mapping file to folder: {e}")
+            return None
+
+    def _handle_page_deletions(self):
+        """Handle deletion of orphaned pages based on configured deletion mode."""
+        if not self.published_pages:
+            return
+
+        deletion_mode = self.config.get("deletion_mode", "conservative")
+        if not deletion_mode or deletion_mode == "off":
+            return
+
+        # Load previous registry
+        previous_registry = self._load_registry()
+        previous_pages = {p["src_path"]: p for p in previous_registry.get("published_pages", [])}
+
+        # Find deleted pages (in previous registry but not in current published)
+        current_src_paths = {p.get("src_path") for p in self.published_pages if p.get("src_path")}
+        orphaned = [p for src, p in previous_pages.items() if src not in current_src_paths and src]
+
+        if not orphaned:
+            log.debug("No orphaned pages found")
+            return
+
+        log.warning(f"Found {len(orphaned)} orphaned pages:")
+        for p in orphaned:
+            log.warning(f"  - {p['title']} ({p.get('src_path', 'unknown path')})")
+
+        if deletion_mode == "conservative":
+            self._handle_conservative_deletion(orphaned)
+        elif deletion_mode == "semi-automatic":
+            self._handle_semi_automatic_deletion(orphaned)
+        elif deletion_mode == "automatic":
+            self._handle_automatic_deletion(orphaned)
+
+    def _handle_conservative_deletion(self, orphaned_pages):
+        """Conservative: only delete if marked with confluence_delete_on_removal."""
+        count = 0
+        for page in orphaned_pages:
+            if page.get("delete_on_removal"):
+                if self.dryrun:
+                    log.warning(f"[DRY RUN] Would delete: {page['title']}")
+                else:
+                    self._delete_page(page)
+                    count += 1
+            else:
+                log.info(f"Skipped deletion (not marked): {page['title']}")
+
+        if count > 0 and not self.dryrun:
+            log.info(f"Deleted {count} orphaned pages")
+
+    def _handle_semi_automatic_deletion(self, orphaned_pages):
+        """Semi-automatic: delete only after N consecutive missing builds."""
+        min_builds = self.config.get("auto_delete_after_builds", 2)
+        deletion_log_file = Path(self.config.get("registry_file", ".confluence-registry.yml")).parent / ".confluence-deletions.yml"
+
+        deletion_log = {}
+        if deletion_log_file.exists():
+            try:
+                with open(deletion_log_file) as f:
+                    deletion_log = yaml.safe_load(f) or {}
+            except:
+                deletion_log = {}
+
+        count = 0
+        for page in orphaned_pages:
+            page_id = str(page.get("id", ""))
+            missing_count = deletion_log.get(page_id, 0) + 1
+
+            if missing_count >= min_builds:
+                if self.dryrun:
+                    log.warning(f"[DRY RUN] Would delete: {page['title']} (missing {missing_count}/{min_builds} builds)")
+                else:
+                    self._delete_page(page)
+                    deletion_log[page_id] = "deleted"
+                    count += 1
+            else:
+                log.info(f"Page missing {missing_count}/{min_builds} builds: {page['title']}")
+                deletion_log[page_id] = missing_count
+
+        # Save deletion log
+        try:
+            with open(deletion_log_file, "w") as f:
+                yaml.dump(deletion_log, f)
+        except Exception as e:
+            log.error(f"Failed to save deletion log: {e}")
+
+        if count > 0 and not self.dryrun:
+            log.info(f"Deleted {count} orphaned pages (semi-automatic)")
+
+    def _handle_automatic_deletion(self, orphaned_pages):
+        """Automatic: delete immediately if confirmation enabled."""
+        if self.config.get("require_confirmation") and not self.dryrun:
+            log.warning(f"Would delete {len(orphaned_pages)} pages. Run with --dry-run first to review.")
+            return
+
+        count = 0
+        for page in orphaned_pages:
+            if self.dryrun:
+                log.warning(f"[DRY RUN] Would delete: {page['title']}")
+            else:
+                self._delete_page(page)
+                count += 1
+
+        if count > 0 and not self.dryrun:
+            log.info(f"Deleted {count} orphaned pages (automatic)")
+
+    def _delete_page(self, page):
+        """Delete a page from Confluence."""
+        try:
+            page_id = page.get("id")
+            self.confluence.remove_page(page_id)
+            log.info(f"✓ Deleted: {page['title']} ({page.get('src_path', 'unknown')})")
+            self._record_deletion(page)
+        except Exception as e:
+            log.error(f"Failed to delete {page['title']}: {e}")
+
+    def _record_deletion(self, page):
+        """Log the deletion in audit trail."""
+        audit_file = Path(self.config.get("registry_file", ".confluence-registry.yml")).parent / ".confluence-deletion-audit.log"
+        try:
+            with open(audit_file, "a") as f:
+                f.write(f"{datetime.utcnow().isoformat()} - Deleted: {page['title']} (id: {page.get('id')}, src: {page.get('src_path')})\n")
+        except Exception as e:
+            log.error(f"Failed to record deletion: {e}")
