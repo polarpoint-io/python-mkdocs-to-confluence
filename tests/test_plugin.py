@@ -3,7 +3,7 @@ import logging
 
 import sys
 import os
-from unittest.mock import Mock, call, patch, MagicMock
+from unittest.mock import Mock, call, patch, MagicMock, ANY
 from mkdocs.structure.pages import Page
 from mkdocs.structure.files import File
 from mkdocs.structure.nav import Navigation
@@ -551,7 +551,10 @@ def test_on_config_env_credentials():
         plugin.on_config({})
 
     mock_confluence.assert_called_once_with(
-        url="https://example.com", username="env_user", password="env_pass"
+        url="https://example.com",
+        username="env_user",
+        password="env_pass",
+        session=ANY,
     )
 
 
@@ -893,6 +896,101 @@ def test_find_page_id_with_parent():
 
     assert result == "child-123"
     mock_confluence.get_page_child_by_type.assert_called_once_with("parent-123", "page")
+
+
+def test_find_page_id_caches_children_per_parent():
+    """
+    Two find_page_id() calls for different siblings under the same parent
+    should only list that parent's children once - not once per call. This
+    is the fix for the quadratic publish cost (each page previously
+    re-listed every sibling of its parent).
+    """
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.get_page_child_by_type.return_value = [
+        {"id": "child-123", "title": "Test Page"},
+        {"id": "child-456", "title": "Other Page"},
+    ]
+    plugin.confluence = mock_confluence
+
+    first = plugin.find_page_id("Test Page", parent_id="parent-123")
+    second = plugin.find_page_id("Other Page", parent_id="parent-123")
+
+    assert first == "child-123"
+    assert second == "child-456"
+    mock_confluence.get_page_child_by_type.assert_called_once_with("parent-123", "page")
+
+
+def test_find_page_id_duplicate_sibling_titles_first_wins():
+    """If two siblings share a (normalized) title, the first one returned
+    by the API should win - matching the pre-cache loop behaviour."""
+    plugin = ConfluencePlugin()
+    plugin.config = {"space": "TEST"}
+
+    mock_confluence = Mock()
+    mock_confluence.get_page_child_by_type.return_value = [
+        {"id": "first-id", "title": "Dup"},
+        {"id": "second-id", "title": "Dup"},
+    ]
+    plugin.confluence = mock_confluence
+
+    result = plugin.find_page_id("Dup", parent_id="parent-123")
+
+    assert result == "first-id"
+
+
+def test_create_or_update_page_updates_children_cache():
+    """A page created under a parent should be visible to a later
+    find_page_id() lookup for the same parent without a fresh API call -
+    otherwise a second markdown page with the same title could be
+    double-created within one build."""
+    plugin = ConfluencePlugin()
+    plugin.normalize_title_key = Mock(return_value="test-page")
+    plugin.page_exists = Mock(return_value=(False, None))
+    plugin.confluence = Mock()
+    plugin.confluence.create_page.return_value = {"id": "new-123"}
+    plugin.confluence.get_page_child_by_type.return_value = []
+    plugin.space = "TEST"
+    plugin.dryrun = False
+    plugin.page_ids = {}
+
+    page_id = plugin.create_or_update_page(
+        title="Test Page", body="<p>content</p>", parent_id="parent-123"
+    )
+    assert page_id == "new-123"
+
+    # Prime the cache for this parent as find_page_id would.
+    cached = plugin._get_children_map("parent-123")
+    assert cached.get("test page") == "new-123"
+    # No API call was needed to see the just-created page.
+    plugin.confluence.get_page_child_by_type.assert_not_called()
+
+
+def test_on_config_mounts_retry_adapter_on_confluence_session():
+    """on_config should hand the atlassian-python-api client a requests
+    session with a retrying HTTPAdapter mounted, so a single dropped
+    connection mid-publish no longer aborts the whole build."""
+    plugin = ConfluencePlugin()
+    plugin.config = {
+        "host_url": "https://example.com",
+        "username": "user",
+        "password": "pass",
+        "space": "TEST",
+    }
+
+    with patch("mkdocs_confluence_plugin.plugin.Confluence") as mock_confluence:
+        plugin.on_config({})
+
+    assert mock_confluence.call_count == 1
+    _, kwargs = mock_confluence.call_args
+    session = kwargs["session"]
+    adapter = session.get_adapter("https://example.com")
+    assert adapter.max_retries.total == 5
+    assert adapter.max_retries.connect == 5
+    assert adapter.max_retries.read == 5
+    assert 503 in adapter.max_retries.status_forcelist
 
 
 def test_find_page_id_global_search():

@@ -4,6 +4,8 @@ import hashlib
 import sys
 import re
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import mimetypes
 import tempfile
 import io
@@ -127,6 +129,10 @@ class ConfluencePlugin(BasePlugin):
         self.pages = []
         self.page_ids = {}
         self.page_versions = {}
+        # {parent_id (str): {normalized_title: page_id}} - populated once per
+        # parent per build by _get_children_map(), instead of re-listing every
+        # sibling on every find_page_id() call (see _get_children_map).
+        self._children_cache = {}
         self.dryrun = False
         self.tab_nav = []
         self.attachments = {}
@@ -682,10 +688,33 @@ class ConfluencePlugin(BasePlugin):
         if missing_keys:
             raise ValueError(f"Missing required config keys: {', '.join(missing_keys)}")
 
+        # Mount a retrying HTTP session on the atlassian-python-api client.
+        # A single dropped connection (observed as a mid-publish
+        # RemoteDisconnected) used to abort the whole build with no retry at
+        # all. Connect/read retries cover transient network drops; the
+        # status forcelist covers rate limiting and transient upstream
+        # errors. POST is deliberately left out of urllib3's default
+        # retryable methods, so a response lost after a successful page
+        # create is never retried into a duplicate page.
+        confluence_session = requests.Session()
+        retry_strategy = Retry(
+            total=5,
+            connect=5,
+            read=5,
+            status=5,
+            backoff_factor=1.0,
+            status_forcelist=[429, 502, 503, 504],
+            respect_retry_after_header=True,
+        )
+        retry_adapter = HTTPAdapter(max_retries=retry_strategy)
+        confluence_session.mount("https://", retry_adapter)
+        confluence_session.mount("http://", retry_adapter)
+
         self.confluence = Confluence(
             url=plugin_cfg["host_url"].replace("/rest/api/content", ""),
             username=plugin_cfg["username"],
             password=plugin_cfg["password"],
+            session=confluence_session,
         )
 
         # Configure session for attachment uploads
@@ -841,6 +870,7 @@ class ConfluencePlugin(BasePlugin):
     def clear_cached_page_info(self):
         self.page_ids.clear()
         self.page_versions.clear()
+        self._children_cache.clear()
 
     def on_nav(self, nav: Navigation, config, files):
         def add_to_tree(tree, parts):
@@ -1336,6 +1366,7 @@ class ConfluencePlugin(BasePlugin):
             )
 
         self.page_ids[key] = page_id
+        self._cache_child(target_parent_id, title, page_id)
         return page_id
 
     def create_page(self, title, body, parent_id, is_folder=False):
@@ -1535,6 +1566,38 @@ class ConfluencePlugin(BasePlugin):
         log.error(f"Failed to create or find page '{title}'")
         return None
 
+    def _get_children_map(self, parent_id) -> dict:
+        """
+        Return a {normalized_title: page_id} map of a parent page's direct
+        children. The listing is fetched once per parent per build and
+        cached in self._children_cache; later lookups for siblings under
+        the same parent are an in-memory dict lookup instead of a fresh
+        "list all children" API call.
+        """
+        cache_key = str(parent_id)
+        children_map = self._children_cache.get(cache_key)
+        if children_map is None:
+            children_map = {}
+            for child in self.confluence.get_page_child_by_type(parent_id, "page"):
+                # setdefault: if Confluence ever returns two siblings with
+                # the same (normalized) title, keep the first one - matching
+                # the previous loop's "first match wins" behaviour.
+                children_map.setdefault(child["title"].strip().lower(), child["id"])
+            self._children_cache[cache_key] = children_map
+        return children_map
+
+    def _cache_child(self, parent_id, title: str, page_id) -> None:
+        """
+        Record a just created/updated page under its parent in the children
+        cache, so a later lookup for one of its siblings in this build sees
+        it without needing a fresh listing call.
+        """
+        if not page_id or not parent_id:
+            return
+        self._children_cache.setdefault(str(parent_id), {})[
+            title.strip().lower()
+        ] = page_id
+
     def find_page_id(self, title: str, parent_id: str | None = None) -> str | None:
         """
         Find a Confluence page ID by its title and parent page ID.
@@ -1545,12 +1608,16 @@ class ConfluencePlugin(BasePlugin):
         # Normalize title for consistent lookup if needed (depends on your implementation)
         normalized_title = title.strip().lower()
 
-        # 1) Search children of parent page if parent_id provided
+        # 1) Search children of parent page if parent_id provided.
+        # The children map is fetched once per parent per build and cached
+        # (see _get_children_map) rather than re-listing every sibling on
+        # every call - that re-listing made publish cost grow with the
+        # square of the page count.
         if parent_id:
-            children = self.confluence.get_page_child_by_type(parent_id, "page")
-            for child in children:
-                if child["title"].strip().lower() == normalized_title:
-                    return child["id"]
+            children_map = self._get_children_map(parent_id)
+            page_id = children_map.get(normalized_title)
+            if page_id:
+                return page_id
 
         # 2) If no parent or not found above, search globally in space by title
         # Use Confluence CQL (Confluence Query Language) to search pages by title in the space
